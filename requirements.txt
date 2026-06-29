@@ -1,0 +1,7 @@
+websockets>=12.0
+sounddevice>=0.4.7
+opuslib>=3.0.1
+numpy>=1.26.0
+PyYAML>=6.0.1
+gpiozero>=2.0.1
+lgpio

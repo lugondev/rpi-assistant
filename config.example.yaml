@@ -1,0 +1,39 @@
+server:
+  host: 192.168.30.133
+  port: 8000
+  secure: false
+
+session:
+  stt_engine: whisper
+  tts_engine: vieneu
+  language: vi
+  voice: null
+  output: audio,text
+
+audio:
+  input_sample_rate: 16000
+  output_sample_rate: 24000
+  uplink_sample_rate: 16000
+  frame_ms: 60
+  input_channels: 1
+  output_channels: 1
+  input_device: null
+  output_device: null
+  input_alsa_device: null
+  output_alsa_device: null
+
+service:
+  reconnect_initial_seconds: 1.0
+  reconnect_max_seconds: 20.0
+  log_events: true
+
+led:
+  enabled: true
+  yellow_pin: 13
+  red_pin: 22
+  green_pin: 17
+
+oled:
+  enabled: true
+  i2c_port: 1
+  i2c_address: 60

@@ -1,0 +1,18 @@
+[Unit]
+Description=Raspberry Pi audio-to-audio client for speech-text-transformer
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/lugon/code/led/agent-assistant
+ExecStart=/home/lugon/code/led/.venv/bin/python /home/lugon/code/led/agent-assistant/rpi_audio_service.py --config /home/lugon/code/led/agent-assistant/config.yaml
+Restart=always
+RestartSec=2
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/usr/lib/python3/dist-packages
+Environment=GPIOZERO_PIN_FACTORY=lgpio
+
+[Install]
+WantedBy=multi-user.target
