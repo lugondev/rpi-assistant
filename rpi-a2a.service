@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/home/lugon/code/led/agent-assistant
-ExecStart=/home/lugon/code/led/.venv/bin/python /home/lugon/code/led/agent-assistant/rpi_audio_service.py --config /home/lugon/code/led/agent-assistant/config.yaml
+WorkingDirectory=/home/lugon/code/agent-assistant
+ExecStart=/home/lugon/code/.venv/bin/python /home/lugon/code/agent-assistant/rpi_audio_service.py --config /home/lugon/code/agent-assistant/config.yaml
 Restart=always
 RestartSec=2
 Environment=PYTHONUNBUFFERED=1

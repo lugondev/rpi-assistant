@@ -19,10 +19,10 @@ The service follows the protocol from `/agents-docs` and `/docs`.
 ## Install (Raspberry Pi)
 
 ```bash
-cd /home/pi/code/led/agent-assistant
-python3 -m venv /home/pi/code/led/.venv
-/home/pi/code/led/.venv/bin/pip install -r requirements.txt
-sudo apt install -y libopus0 portaudio19-dev
+cd /home/pi/code/agent-assistant
+python3 -m venv ../.venv
+../.venv/bin/pip install -r requirements.txt
+sudo apt install -y swig liblgpio-dev libopus0 portaudio19-dev build-essential python3-dev
 cp config.example.yaml config.yaml
 ```
 
@@ -74,4 +74,6 @@ journalctl -u rpi-a2a.service -f
 - Status mapping: connecting = yellow blink, ready/listening = green on, processing = yellow on, speaking = red on, error = red blink.
 - OLED status is optional and follows the same `traffic-light.py` pattern via `luma.oled` on I2C `0x3C`.
 - The venv now needs `lgpio` so `gpiozero` can use a real pin factory under systemd.
+- Before `pip install -r requirements.txt`, install the system dependencies: `swig` and `liblgpio-dev`.
+- If the service fails to start with `status=200/CHDIR`, update `rpi-a2a.service` to point to the actual `WorkingDirectory` and `ExecStart` path for this repository.
 - The bundled systemd unit exports `PYTHONPATH=/usr/lib/python3/dist-packages` and `GPIOZERO_PIN_FACTORY=lgpio` so the venv sees the same GPIO backend as `python3 examples/traffic-light.py`.

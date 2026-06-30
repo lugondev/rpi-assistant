@@ -13,9 +13,9 @@ def build_ws_url(config: Config) -> str:
             "tts_engine": config.tts_engine,
             "language": config.language,
             "sample_rate": config.uplink_sample_rate,
-            "audio_codec": "pcm16",
+            "audio_codec": "opus",
             "output": config.output,
-            "audio_out": "url",
+            "audio_out": "opus",
             "output_sample_rate": config.output_sample_rate,
             **({"voice": config.voice} if config.voice else {}),
         }
