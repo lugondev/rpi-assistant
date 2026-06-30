@@ -9,6 +9,12 @@ session:
   language: vi
   voice: null
   output: audio,text
+  # Barge-in: let the user interrupt the assistant by speaking over it. Needs a mic
+  # well-isolated from the speaker (or hardware AEC) — otherwise speaker bleed
+  # self-triggers it. Off by default; tune the RMS threshold to your hardware.
+  allow_barge_in: false
+  barge_in_rms_threshold: 1200.0   # int16 RMS the mic must exceed during playback
+  barge_in_min_frames: 5           # consecutive loud frames (×frame_ms) to confirm
 
 audio:
   input_sample_rate: 16000
@@ -21,6 +27,7 @@ audio:
   output_device: null
   input_alsa_device: null
   output_alsa_device: null
+  playback_preroll_ms: 150   # jitter buffer pre-roll before playback starts (smoothness)
 
 service:
   reconnect_initial_seconds: 1.0

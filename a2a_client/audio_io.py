@@ -15,6 +15,7 @@ import opuslib
 import sounddevice as sd
 
 from .config import Config
+from .playback_buffer import PlaybackBuffer
 
 
 class AudioIO:
@@ -24,8 +25,16 @@ class AudioIO:
 
         self.loop = loop
         self.mic_pcm_queue: queue.Queue[bytes] = queue.Queue(maxsize=200)
-        self.playback_expected_frames = 0
-        self.playback_active = False
+        # Jitter buffer: decoded reply PCM is pushed here; a callback-mode output stream
+        # pulls steady blocks, so network jitter never starves the speaker. Pre-roll
+        # (~150ms) before playback starts; capacity capped at ~5s.
+        self.out_frame_samples = int(self.config.output_sample_rate * self.config.frame_ms / 1000)
+        prime = int(self.config.output_sample_rate * self.config.playback_preroll_ms / 1000)
+        self.play_buffer = PlaybackBuffer(
+            prime_samples=prime, max_samples=self.config.output_sample_rate * 5
+        )
+        # True between audio_start and turn_done/abort; OR while audio is still queued.
+        self._speaking_flag = False
         self._last_status_log_at = 0.0
         self._capture_process: subprocess.Popen[bytes] | None = None
         self._capture_thread: threading.Thread | None = None
@@ -40,8 +49,19 @@ class AudioIO:
 
         self.in_frame_samples = int(self.config.input_sample_rate * self.config.frame_ms / 1000)
         self.uplink_frame_samples = int(self.config.uplink_sample_rate * self.config.frame_ms / 1000)
-        self.out_frame_samples = int(self.config.output_sample_rate * self.config.frame_ms / 1000)
         self.in_frame_bytes = self.in_frame_samples * self.config.input_channels * 2
+
+    def is_playing(self) -> bool:
+        """True while reply audio is playing or still queued — used to gate the mic."""
+        return self._speaking_flag or self.play_buffer.pending() > 0
+
+    def set_speaking(self, value: bool) -> None:
+        self._speaking_flag = value
+
+    def reset_playback(self) -> None:
+        """Stop playback immediately (barge-in / abort): drop queued audio + re-arm."""
+        self._speaking_flag = False
+        self.play_buffer.reset()
 
     def on_input_audio(self, indata: np.ndarray, frames: int, _time: Any, status: sd.CallbackFlags) -> None:
         if status:
@@ -49,9 +69,10 @@ class AudioIO:
             if now - self._last_status_log_at >= 2.0:
                 self._last_status_log_at = now
                 self.logger(f"mic callback status: {status}")
-        if frames <= 0 or self.playback_active:
+        if frames <= 0:
             return
-
+        # Always enqueue; the sender decides whether to drop (half-duplex) or use the
+        # frame for barge-in detection. This keeps the gating logic in one place.
         payload = indata.copy().tobytes()
         try:
             self.mic_pcm_queue.put_nowait(payload)
@@ -150,8 +171,14 @@ class AudioIO:
             )
             self.input_stream.start()
 
-        if self.output_stream is not None:
-            self.output_stream.start()
+    def on_output_audio(self, outdata: np.ndarray, frames: int, _time: Any, status: sd.CallbackFlags) -> None:
+        """PortAudio pulls a steady block from the jitter buffer (silence if underrun)."""
+        mono = self.play_buffer.pull(frames)
+        if self.config.output_channels == 1:
+            outdata[:, 0] = mono
+        else:
+            for ch in range(self.config.output_channels):
+                outdata[:, ch] = mono
 
     def _open_output_stream(self) -> bool:
         if self.output_stream is not None:
@@ -167,6 +194,7 @@ class AudioIO:
                     dtype="int16",
                     blocksize=self.out_frame_samples,
                     device=device,
+                    callback=self.on_output_audio,  # callback mode: pulls from jitter buffer
                 )
                 self.output_stream.start()
                 self.logger(f"sounddevice playback ready (device={device!r})")
@@ -227,78 +255,20 @@ class AudioIO:
         return resampled.tobytes()
 
     def play_opus_frame(self, packet: bytes) -> None:
-        if self.decoder is None or self.output_stream is None:
+        """Decode one Opus packet and queue it (the output callback plays it)."""
+        if self.decoder is None:
             return
         pcm_bytes = self.decoder.decode(packet, self.out_frame_samples)
-        pcm_mono = np.frombuffer(pcm_bytes, dtype=np.int16)
-        self.write_output_pcm_mono(pcm_mono)
-
-    def write_output_pcm_mono(self, pcm_mono: np.ndarray) -> None:
-        if self.output_stream is None and not self._open_output_stream():
-            return
-        if self.config.output_channels == 1:
-            pcm = pcm_mono
-        else:
-            pcm = np.repeat(pcm_mono[:, np.newaxis], self.config.output_channels, axis=1)
-        self.output_stream.write(pcm)
+        self.play_buffer.push(np.frombuffer(pcm_bytes, dtype=np.int16))
 
     def play_wav_bytes(self, wav_data: bytes) -> None:
-        if self.output_stream is not None:
-            with wave.open(io.BytesIO(wav_data), "rb") as wf:
-                channels = wf.getnchannels()
-                sample_width = wf.getsampwidth()
-                sample_rate = wf.getframerate()
-                frames = wf.getnframes()
-                pcm = wf.readframes(frames)
-
-            if sample_width != 2:
-                self.logger(f"skip wav with unsupported sample width: {sample_width}")
-                return
-
-            pcm_arr = np.frombuffer(pcm, dtype=np.int16)
-            if channels > 1:
-                pcm_arr = pcm_arr.reshape(-1, channels)
-                pcm_arr = pcm_arr[:, 0]
-
-            if sample_rate != self.config.output_sample_rate and len(pcm_arr) > 0:
-                duration = len(pcm_arr) / float(sample_rate)
-                target_len = max(1, int(duration * self.config.output_sample_rate))
-                src_x = np.linspace(0.0, 1.0, num=len(pcm_arr), endpoint=False)
-                dst_x = np.linspace(0.0, 1.0, num=target_len, endpoint=False)
-                pcm_arr = np.interp(dst_x, src_x, pcm_arr.astype(np.float32)).astype(np.int16)
-
-            idx = 0
-            chunk = max(1, self.out_frame_samples)
-            while idx < len(pcm_arr):
-                self.write_output_pcm_mono(pcm_arr[idx : idx + chunk])
-                idx += chunk
-            return
-
-        aplay = shutil.which("aplay")
-        device = self.config.output_alsa_device
-        if aplay and device:
-            command = [aplay, "-q", "-D", device, "-"]
-            try:
-                subprocess.run(
-                    command,
-                    input=wav_data,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    check=True,
-                )
-                return
-            except subprocess.CalledProcessError as exc:
-                stderr_text = exc.stderr.decode(errors="ignore").strip() if exc.stderr else ""
-                self.logger(f"aplay playback failed: {stderr_text or exc}")
-            except Exception as exc:  # noqa: BLE001
-                self.logger(f"aplay playback unavailable: {exc}")
-
+        """Decode a whole WAV (url/RIFF reply), resample to the output rate, and queue it
+        into the jitter buffer — same playback path as Opus frames (callback-driven)."""
         with wave.open(io.BytesIO(wav_data), "rb") as wf:
             channels = wf.getnchannels()
             sample_width = wf.getsampwidth()
             sample_rate = wf.getframerate()
-            frames = wf.getnframes()
-            pcm = wf.readframes(frames)
+            pcm = wf.readframes(wf.getnframes())
 
         if sample_width != 2:
             self.logger(f"skip wav with unsupported sample width: {sample_width}")
@@ -306,8 +276,7 @@ class AudioIO:
 
         pcm_arr = np.frombuffer(pcm, dtype=np.int16)
         if channels > 1:
-            pcm_arr = pcm_arr.reshape(-1, channels)
-            pcm_arr = pcm_arr[:, 0]
+            pcm_arr = pcm_arr.reshape(-1, channels)[:, 0]
 
         if sample_rate != self.config.output_sample_rate and len(pcm_arr) > 0:
             duration = len(pcm_arr) / float(sample_rate)
@@ -316,8 +285,4 @@ class AudioIO:
             dst_x = np.linspace(0.0, 1.0, num=target_len, endpoint=False)
             pcm_arr = np.interp(dst_x, src_x, pcm_arr.astype(np.float32)).astype(np.int16)
 
-        idx = 0
-        chunk = max(1, self.out_frame_samples)
-        while idx < len(pcm_arr):
-            self.write_output_pcm_mono(pcm_arr[idx : idx + chunk])
-            idx += chunk
+        self.play_buffer.push(pcm_arr)

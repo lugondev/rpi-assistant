@@ -46,6 +46,7 @@ class AudioToAudioService:
         self._uplink_frames_sent = 0
         self._last_uplink_log_at = 0.0
         self._idle_reset_handle: asyncio.TimerHandle | None = None
+        self._barge_frames = 0  # consecutive loud mic frames during playback (barge-in)
 
     def log(self, message: str) -> None:
         now = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -91,15 +92,15 @@ class AudioToAudioService:
             with urllib.request.urlopen(audio_url, timeout=20) as response:  # nosec B310
                 return response.read()
 
-        self.audio.playback_active = True
+        self.audio.set_speaking(True)
         try:
             wav_data = await asyncio.to_thread(_download)
+            # Queue into the jitter buffer; the output callback plays it out (the buffer
+            # staying non-empty keeps is_playing() true until it actually finishes).
             await asyncio.to_thread(self.audio.play_wav_bytes, wav_data)
         except Exception as exc:  # noqa: BLE001
             self.log(f"audio url playback error: {exc}")
             self.oled.error("AUDIO ERR")
-        finally:
-            self.audio.playback_active = False
 
     async def sender(self, ws: websockets.WebSocketClientProtocol) -> None:
         await self._session_ready.wait()
@@ -110,13 +111,38 @@ class AudioToAudioService:
                 chunk = await asyncio.to_thread(self.audio.get_mic_frame, 0.5)
             except queue.Empty:
                 continue
-            if self.audio.playback_active:
-                continue
             buffer.extend(chunk)
 
             while len(buffer) >= self.audio.in_frame_bytes:
                 pcm_frame = bytes(buffer[: self.audio.in_frame_bytes])
                 del buffer[: self.audio.in_frame_bytes]
+
+                # Half-duplex / barge-in gating. While the assistant is playing we
+                # normally drop mic frames (the speaker would bleed into the mic). If
+                # barge-in is enabled, a run of LOUD mic frames (above the speaker
+                # bleed) is treated as the user interrupting: stop playback, tell the
+                # server, and resume uplinking from this frame on.
+                if self.audio.is_playing():
+                    if not self.config.allow_barge_in:
+                        continue
+                    samples = np.frombuffer(pcm_frame, dtype=np.int16)
+                    rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2))) if len(samples) else 0.0
+                    if rms >= self.config.barge_in_rms_threshold:
+                        self._barge_frames += 1
+                    else:
+                        self._barge_frames = 0
+                    if self._barge_frames < self.config.barge_in_min_frames:
+                        continue
+                    self._barge_frames = 0
+                    self.audio.reset_playback()
+                    try:
+                        await ws.send(json.dumps({"type": "abort"}))
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self.log("barge-in: user interrupted playback")
+                else:
+                    self._barge_frames = 0
+
                 try:
                     if self._negotiated_audio_codec == "opus":
                         pcm_frame = self.audio.resample_pcm16_mono(
@@ -161,22 +187,16 @@ class AudioToAudioService:
                 return
 
             if isinstance(message, bytes):
-                self.log(f"binary message: {len(message)} bytes head={message[:8].hex()}")
                 if message.startswith(b"RIFF"):
-                    self.audio.playback_active = True
-                    try:
-                        await asyncio.to_thread(self.audio.play_wav_bytes, message)
-                    finally:
-                        self.audio.playback_active = False
+                    self.audio.set_speaking(True)
+                    await asyncio.to_thread(self.audio.play_wav_bytes, message)
                     continue
                 if self._negotiated_audio_out != "opus":
                     continue
-                if self.audio.playback_expected_frames <= 0:
-                    continue
+                # Decode + queue the Opus frame; the output callback plays it from the
+                # jitter buffer at a steady rate (seamless across network jitter).
+                self.audio.set_speaking(True)
                 self.audio.play_opus_frame(message)
-                self.audio.playback_expected_frames -= 1
-                if self.audio.playback_expected_frames == 0:
-                    self.audio.playback_active = False
                 continue
 
             try:
@@ -198,8 +218,7 @@ class AudioToAudioService:
                 self._schedule_ready_reset()
             elif name == "audio_start":
                 self._cancel_idle_reset()
-                self.audio.playback_expected_frames = int(event.get("frames", 0))
-                self.audio.playback_active = self.audio.playback_expected_frames > 0
+                self.audio.set_speaking(True)
                 self.leds.speaking()
                 self.oled.speaking()
                 self._schedule_ready_reset(delay=3.0)
@@ -212,14 +231,17 @@ class AudioToAudioService:
                     await self._play_audio_url(str(audio_url))
                     self._schedule_ready_reset(delay=3.0)
             elif name == "audio_end":
+                # End of one sentence — let the queued tail finish playing; the next
+                # sentence (if any) keeps the buffer fed. Don't stop here.
                 self._cancel_idle_reset()
-                self.audio.playback_expected_frames = 0
-                self.audio.playback_active = False
+                self._schedule_ready_reset(delay=3.0)
+            elif name == "turn_done":
+                self._cancel_idle_reset()
+                self.audio.set_speaking(False)  # buffer drains naturally; mic re-enables when empty
                 self._set_ready()
-            elif name in {"aborted", "turn_done", "reset"}:
+            elif name in {"aborted", "reset"}:
                 self._cancel_idle_reset()
-                self.audio.playback_expected_frames = 0
-                self.audio.playback_active = False
+                self.audio.reset_playback()  # interrupt: drop queued audio immediately
                 self._set_ready()
             elif name == "error":
                 self._cancel_idle_reset()
@@ -279,7 +301,10 @@ class AudioToAudioService:
         ws_url = build_ws_url(self.config)
         self.log(f"target websocket: {ws_url}")
 
-        await asyncio.to_thread(self._warm_stt_engine)
+        # Connect + start audio immediately; warm STT in the background instead of
+        # blocking startup on it. The server also warms STT/TTS on WS connect, so this
+        # is just a best-effort nudge and must not delay "connected".
+        asyncio.create_task(asyncio.to_thread(self._warm_stt_engine))
         self.audio.start()
         self.log(
             "audio started "
