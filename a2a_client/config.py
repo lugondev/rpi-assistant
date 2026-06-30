@@ -69,7 +69,7 @@ def load_config(path: str) -> Config:
         output_channels=int(audio.get("output_channels", 2)),
         input_device=audio.get("input_device"),
         output_device=audio.get("output_device"),
-        playback_preroll_ms=int(audio.get("playback_preroll_ms", 150)),
+        playback_preroll_ms=int(audio.get("playback_preroll_ms", 200)),
         allow_barge_in=bool(session.get("allow_barge_in", False)),
         barge_in_rms_threshold=float(session.get("barge_in_rms_threshold", 1200.0)),
         barge_in_min_frames=int(session.get("barge_in_min_frames", 5)),

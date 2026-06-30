@@ -238,6 +238,10 @@ class AudioToAudioService:
             elif name == "turn_done":
                 self._cancel_idle_reset()
                 self.audio.set_speaking(False)  # buffer drains naturally; mic re-enables when empty
+                if self.config.log_events:
+                    # Diagnostic: rising underrun = playback was starved (network/pacing);
+                    # ~0 = smooth. Helps tell client-side starvation from server-side gaps.
+                    self.log(f"playback underrun total: {self.audio.play_buffer.underrun_samples} samples")
                 self._set_ready()
             elif name in {"aborted", "reset"}:
                 self._cancel_idle_reset()

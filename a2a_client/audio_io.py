@@ -27,11 +27,13 @@ class AudioIO:
         self.mic_pcm_queue: queue.Queue[bytes] = queue.Queue(maxsize=200)
         # Jitter buffer: decoded reply PCM is pushed here; a callback-mode output stream
         # pulls steady blocks, so network jitter never starves the speaker. Pre-roll
-        # (~150ms) before playback starts; capacity capped at ~5s.
+        # before playback starts. Capacity is generous (30s) — the server bursts a whole
+        # reply (no server pacing), and the cap is only a runaway-producer guard; a tight
+        # cap would DROP buffered audio mid-reply (= dropped words).
         self.out_frame_samples = int(self.config.output_sample_rate * self.config.frame_ms / 1000)
         prime = int(self.config.output_sample_rate * self.config.playback_preroll_ms / 1000)
         self.play_buffer = PlaybackBuffer(
-            prime_samples=prime, max_samples=self.config.output_sample_rate * 5
+            prime_samples=prime, max_samples=self.config.output_sample_rate * 30
         )
         # True between audio_start and turn_done/abort; OR while audio is still queued.
         self._speaking_flag = False

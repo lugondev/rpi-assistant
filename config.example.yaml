@@ -27,7 +27,7 @@ audio:
   output_device: null
   input_alsa_device: null
   output_alsa_device: null
-  playback_preroll_ms: 150   # jitter buffer pre-roll before playback starts (smoothness)
+  playback_preroll_ms: 200   # jitter buffer pre-roll before playback starts (smoothness)
 
 service:
   reconnect_initial_seconds: 1.0
