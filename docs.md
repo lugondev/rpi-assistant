@@ -32,6 +32,10 @@ Update `config.yaml`:
 - Optional `audio.input_device` / `audio.output_device` if default devices are not correct.
 - Set `audio.input_channels` and `audio.output_channels` to match hardware.
 	Example on this Pi: USB mic is mono (`1`), USB speaker is stereo (`2`).
+- `audio.playback_preroll_ms`: playback pre-roll buffer in milliseconds; `150` is the default and helps smooth speaker output.
+- `session.allow_barge_in`: keep `false` unless you want the user to interrupt assistant playback by speaking over it.
+- `session.barge_in_rms_threshold`: RMS level the mic must exceed during playback before barge-in is counted.
+- `session.barge_in_min_frames`: number of consecutive loud frames required to confirm barge-in.
 - For triệt overflow capture, prefer `audio.input_alsa_device: hw:3,0` so the mic is read by `arecord` instead of PortAudio callback.
 - For stable speaker playback under systemd, prefer `audio.output_alsa_device: plughw:2,0` so audio is sent through `aplay` instead of PortAudio.
 - `audio.input_sample_rate` is the ALSA capture rate, while `audio.uplink_sample_rate` is the rate sent to the server for STT. Keep the uplink at `16000` for the most compatible conversation mode.
