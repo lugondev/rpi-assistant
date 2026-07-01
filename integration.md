@@ -7,7 +7,7 @@ the **server** — the device needs only audio I/O, Opus, and a WebSocket.
 ```
 ┌──────────── Raspberry Pi ────────────┐         ┌──────────────── Gateway server ────────────────┐
 │ mic → Opus(16k) ──────────────────────┼──WS────▶│ decode → VAD → STT → LLM → TTS                  │
-│ speaker ◀── Opus(24k) ◀────────────────┼──WS─────│ → encode → push reply frames                    │
+│ speaker ◀── Opus(16k) ◀────────────────┼──WS─────│ → encode → push reply frames                    │
 └───────────────────────────────────────┘         └─────────────────────────────────────────────────┘
 ```
 
@@ -28,11 +28,11 @@ Recommended params for a duplex voice device:
 | `audio_codec` | `opus` | uplink codec — raw Opus packets |
 | `output` | `audio,text` | what to receive: `audio` (+ `text` for subtitles/debug) |
 | `audio_out` | `opus` | reply audio delivered as **pushed Opus frames** (not a URL) |
-| `output_sample_rate` | `24000` | **downlink** Opus rate (Hz) |
+| `output_sample_rate` | `16000` | **downlink** Opus rate (Hz) |
 
 Full example:
 ```
-ws://192.168.1.50:8000/v1/conversation/stream?stt_engine=whisper_mlx&tts_engine=vieneu&language=vi&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=24000
+ws://192.168.1.50:8000/v1/conversation/stream?stt_engine=whisper_mlx&tts_engine=vieneu&language=vi&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=16000
 ```
 
 On connect the server sends one `session_started` JSON with the negotiated config
@@ -44,7 +44,7 @@ On connect the server sends one `session_started` JSON with the negotiated confi
 | direction | codec | rate | channels | frame |
 |-----------|-------|------|----------|-------|
 | **uplink** (device → server) | Opus | 16 000 Hz | mono | 20–60 ms (use **60 ms = 960 samples**) |
-| **downlink** (server → device) | Opus | 24 000 Hz | mono | 60 ms (1440 samples) |
+| **downlink** (server → device) | Opus | 16 000 Hz | mono | 60 ms (960 samples) |
 
 - Each Opus packet is **one binary WebSocket frame** (no extra header).
 - PCM is signed 16-bit little-endian before/after Opus.
@@ -119,8 +119,12 @@ python scripts/rpi_voice_client.py --host <server-ip> --port 8000
 ```
 
 It captures the mic at 16 kHz, encodes 60 ms Opus frames, streams them, decodes the
-24 kHz reply frames between `audio_start`/`audio_end`, and plays them — with
+16 kHz reply frames between `audio_start`/`audio_end`, and plays them — with
 half-duplex mic muting during playback.
+
+**ESP32-S3 firmware:** a native ESP-IDF firmware speaking this same protocol lives in
+[`../esp32-assistant`](../esp32-assistant/README.md). Hands-free, ES8311 codec, Opus
+uplink/downlink, half-duplex — the on-device equivalent of the reference client above.
 
 ## 5a. Raspberry Pi Service Setup
 
@@ -162,7 +166,7 @@ session:
 
 audio:
   input_sample_rate: 16000       # Mic sample rate (Hz)
-  output_sample_rate: 24000      # Speaker sample rate (Hz)
+  output_sample_rate: 16000      # Speaker sample rate (Hz)
   uplink_sample_rate: 16000      # Frame rate for uplink Opus
   frame_ms: 60                   # Frame duration
   input_channels: 1              # Mono mic
@@ -194,7 +198,7 @@ oled:
 The service streams **Opus-encoded audio** (not PCM16):
 
 - **Uplink** (device → server): Binary WebSocket frames of Opus packets @ 16 kHz
-- **Downlink** (server → device): Binary Opus frames @ 24 kHz between `audio_start`/`audio_end` events
+- **Downlink** (server → device): Binary Opus frames @ 16 kHz between `audio_start`/`audio_end` events
 - **Duplex control**: Mic is auto-muted while speaker plays to prevent barge-in
 
 The service handles:
@@ -208,7 +212,7 @@ The service handles:
 
 Browsers can receive the streamed Opus reply (instead of fetching WAV URLs) using the
 **WebCodecs** `AudioDecoder` — ~10× less downlink bandwidth, gapless playback. Connect
-with `audio_out=opus&output_sample_rate=24000`, set `ws.binaryType = "arraybuffer"`:
+with `audio_out=opus&output_sample_rate=16000`, set `ws.binaryType = "arraybuffer"`:
 
 ```js
 const dec = new AudioDecoder({
@@ -223,7 +227,7 @@ const dec = new AudioDecoder({
   },
   error: (e) => console.error(e),
 });
-dec.configure({ codec: "opus", sampleRate: 24000, numberOfChannels: 1 });
+dec.configure({ codec: "opus", sampleRate: 16000, numberOfChannels: 1 });
 
 let ts = 0; // microseconds
 ws.onmessage = (ev) => {

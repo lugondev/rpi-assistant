@@ -62,7 +62,7 @@ def load_config(path: str) -> Config:
         voice=session.get("voice"),
         output=str(session.get("output", "audio,text")),
         input_sample_rate=int(audio.get("input_sample_rate", 16000)),
-        output_sample_rate=int(audio.get("output_sample_rate", 24000)),
+        output_sample_rate=int(audio.get("output_sample_rate", 16000)),
         uplink_sample_rate=int(audio.get("uplink_sample_rate", 16000)),
         frame_ms=int(audio.get("frame_ms", 60)),
         input_channels=int(audio.get("input_channels", 1)),

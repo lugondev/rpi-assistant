@@ -4,7 +4,7 @@ This folder now contains a runnable Raspberry Pi client for:
 
 - Mic capture on the Pi.
 - Uplink to `WS /v1/conversation/stream` as Opus 16 kHz.
-- Downlink reply Opus 24 kHz from server.
+- Downlink reply Opus 16 kHz from server.
 - Speaker playback on the Pi.
 
 The service follows the protocol from `/agents-docs` and `/docs`.
@@ -73,7 +73,7 @@ journalctl -u rpi-a2a.service -f
 
 - Service uses half-duplex guard: when playing assistant audio, mic uplink is paused to reduce speaker echo.
 - Reconnect uses exponential backoff if WebSocket disconnects.
-- Default session params: `audio_codec=opus`, `audio_out=opus`, `sample_rate=16000`, `output_sample_rate=24000`.
+- Default session params: `audio_codec=opus`, `audio_out=opus`, `sample_rate=16000`, `output_sample_rate=16000`.
 - LED status is optional and uses GPIO pins `13` (yellow), `22` (red), `17` (green) by default.
 - Status mapping: connecting = yellow blink, ready/listening = green on, processing = yellow on, speaking = red on, error = red blink.
 - OLED status is optional and follows the same `traffic-light.py` pattern via `luma.oled` on I2C `0x3C`.

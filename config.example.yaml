@@ -18,7 +18,7 @@ session:
 
 audio:
   input_sample_rate: 16000
-  output_sample_rate: 24000
+  output_sample_rate: 16000
   uplink_sample_rate: 16000
   frame_ms: 60
   input_channels: 1
