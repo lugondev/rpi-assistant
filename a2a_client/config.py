@@ -40,6 +40,7 @@ class Config:
     oled_enabled: bool
     oled_i2c_port: int
     oled_i2c_address: int
+    oled_font_path: str
 
 
 def load_config(path: str) -> Config:
@@ -87,4 +88,5 @@ def load_config(path: str) -> Config:
         oled_enabled=bool(oled.get("enabled", True)),
         oled_i2c_port=int(oled.get("i2c_port", 1)),
         oled_i2c_address=int(oled.get("i2c_address", 0x3C)),
+        oled_font_path=str(oled.get("font_path", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")),
     )

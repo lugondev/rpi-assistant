@@ -37,6 +37,7 @@ class AudioToAudioService:
                 enabled=config.oled_enabled,
                 i2c_port=config.oled_i2c_port,
                 i2c_address=config.oled_i2c_address,
+                font_path=config.oled_font_path,
             ),
             logger=self.log,
         )
