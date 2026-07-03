@@ -9,6 +9,12 @@ session:
   language: vi
   voice: null
   output: audio,text
+  # Named LLM profile (created via POST /v1/profiles) — overrides the LLM model,
+  # system prompt, TTS engine/voice, MCP tools, and memory settings above with the
+  # profile's saved config. Leave null to use the fields above / server .env defaults.
+  # If the name matches a language preset (vi/en/multi/en_vi) it also sets the STT
+  # engine + language, unless stt_engine/language are set explicitly.
+  profile: null
   # Barge-in: let the user interrupt the assistant by speaking over it. Needs a mic
   # well-isolated from the speaker (or hardware AEC) — otherwise speaker bleed
   # self-triggers it. Off by default; tune the RMS threshold to your hardware.

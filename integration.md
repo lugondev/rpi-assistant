@@ -29,10 +29,16 @@ Recommended params for a duplex voice device:
 | `output` | `audio,text` | what to receive: `audio` (+ `text` for subtitles/debug) |
 | `audio_out` | `opus` | reply audio delivered as **pushed Opus frames** (not a URL) |
 | `output_sample_rate` | `16000` | **downlink** Opus rate (Hz) |
+| `profile` | *(optional)* | named **chatllm profile** (`POST /v1/profiles`) — bundles LLM model/system prompt/TTS/MCP tools/memory; see [`../docs/device-integration.md`](../docs/device-integration.md#1a-profiles-connect-a-device-as-a-preset-chatllm-persona) |
 
 Full example:
 ```
 ws://192.168.1.50:8000/v1/conversation/stream?stt_engine=whisper_mlx&tts_engine=vieneu&language=vi&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=16000
+```
+
+Full example with a profile:
+```
+ws://192.168.1.50:8000/v1/conversation/stream?profile=kitchen&sample_rate=16000&audio_codec=opus&output=audio,text&audio_out=opus&output_sample_rate=16000
 ```
 
 On connect the server sends one `session_started` JSON with the negotiated config
@@ -116,6 +122,8 @@ sudo apt install -y libopus0 portaudio19-dev
 pip install websockets sounddevice opuslib numpy
 
 python scripts/rpi_voice_client.py --host <server-ip> --port 8000
+# activate a saved profile instead of --stt/--tts:
+python scripts/rpi_voice_client.py --host <server-ip> --profile kitchen
 ```
 
 It captures the mic at 16 kHz, encodes 60 ms Opus frames, streams them, decodes the
@@ -163,6 +171,10 @@ session:
   tts_engine: vieneu             # Vietnamese TTS
   language: vi
   output: audio,text             # Get both audio reply and text
+  profile: null                  # optional: named profile (POST /v1/profiles) —
+                                  # overrides LLM model/system prompt/TTS/MCP/memory;
+                                  # stt_engine/language above still apply unless the
+                                  # profile name matches a language preset (vi/en/multi/en_vi)
 
 audio:
   input_sample_rate: 16000       # Mic sample rate (Hz)

@@ -14,6 +14,7 @@ class Config:
     tts_engine: str
     language: str
     voice: str | None
+    profile: str | None
     output: str
     input_sample_rate: int
     output_sample_rate: int
@@ -60,6 +61,7 @@ def load_config(path: str) -> Config:
         tts_engine=str(session.get("tts_engine", "vieneu")),
         language=str(session.get("language", "vi")),
         voice=session.get("voice"),
+        profile=session.get("profile"),
         output=str(session.get("output", "audio,text")),
         input_sample_rate=int(audio.get("input_sample_rate", 16000)),
         output_sample_rate=int(audio.get("output_sample_rate", 16000)),

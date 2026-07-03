@@ -39,6 +39,7 @@ Update `config.yaml`:
 - For triệt overflow capture, prefer `audio.input_alsa_device: hw:3,0` so the mic is read by `arecord` instead of PortAudio callback.
 - For stable speaker playback under systemd, prefer `audio.output_alsa_device: plughw:2,0` so audio is sent through `aplay` instead of PortAudio.
 - `audio.input_sample_rate` is the ALSA capture rate, while `audio.uplink_sample_rate` is the rate sent to the server for STT. Keep the uplink at `16000` for the most compatible conversation mode.
+- `session.profile`: optional named profile created on the server with `POST /v1/profiles` (LLM model/system prompt/TTS/MCP tools/memory bundled together). Set it to activate that persona instead of configuring `stt_engine`/`tts_engine` individually — see `integration.md` §1 and `../docs/device-integration.md` §1a.
 
 List device indexes:
 

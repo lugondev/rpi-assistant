@@ -18,6 +18,7 @@ def build_ws_url(config: Config) -> str:
             "audio_out": "opus",
             "output_sample_rate": config.output_sample_rate,
             **({"voice": config.voice} if config.voice else {}),
+            **({"profile": config.profile} if config.profile else {}),
         }
     )
     return f"{scheme}://{config.host}:{config.port}/v1/conversation/stream?{query}"
