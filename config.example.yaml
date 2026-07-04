@@ -21,6 +21,10 @@ session:
   allow_barge_in: false
   barge_in_rms_threshold: 1200.0   # int16 RMS the mic must exceed during playback
   barge_in_min_frames: 5           # consecutive loud frames (×frame_ms) to confirm
+  # Where the last server-assigned session_id is cached, so reconnects (WiFi blips,
+  # service restarts) resume the same conversation/history instead of starting a new
+  # one each time. Delete this file to force a fresh session.
+  session_state_path: ~/.cache/agent-assistant/session_id
 
 audio:
   input_sample_rate: 16000

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import yaml
+
+_DEFAULT_SESSION_STATE_PATH = "~/.cache/agent-assistant/session_id"
 
 
 @dataclass
@@ -41,6 +44,7 @@ class Config:
     oled_i2c_port: int
     oled_i2c_address: int
     oled_font_path: str
+    session_state_path: str
 
 
 def load_config(path: str) -> Config:
@@ -89,4 +93,7 @@ def load_config(path: str) -> Config:
         oled_i2c_port=int(oled.get("i2c_port", 1)),
         oled_i2c_address=int(oled.get("i2c_address", 0x3C)),
         oled_font_path=str(oled.get("font_path", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")),
+        session_state_path=os.path.expanduser(
+            str(session.get("session_state_path", _DEFAULT_SESSION_STATE_PATH))
+        ),
     )

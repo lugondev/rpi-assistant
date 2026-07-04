@@ -55,6 +55,14 @@ class LedStatusController:
         self._all_off()
         self._yellow.blink(on_time=0.25, off_time=0.25, background=True)
 
+    def warming(self) -> None:
+        """STT/TTS models are still cold-loading server-side — don't speak yet.
+        Slower blink than connecting() so the two are visually distinguishable."""
+        if not self._enabled:
+            return
+        self._all_off()
+        self._yellow.blink(on_time=0.6, off_time=0.6, background=True)
+
     def ready(self) -> None:
         if not self._enabled:
             return

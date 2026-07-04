@@ -14,6 +14,7 @@ from .audio_io import AudioIO
 from .config import Config
 from .led_status import LedConfig, LedStatusController
 from .oled_status import OledConfig, OledStatusController
+from .session_state import load_session_id, save_session_id
 from .ws_protocol import build_ws_url
 
 
@@ -48,6 +49,9 @@ class AudioToAudioService:
         self._last_uplink_log_at = 0.0
         self._idle_reset_handle: asyncio.TimerHandle | None = None
         self._barge_frames = 0  # consecutive loud mic frames during playback (barge-in)
+        # Resume the same server-side session (and its chat history) across
+        # reconnects and full restarts instead of minting a fresh one every time.
+        self._session_id: str | None = load_session_id(config.session_state_path)
 
     def log(self, message: str) -> None:
         now = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -263,6 +267,13 @@ class AudioToAudioService:
                 self._negotiated_audio_codec = str(event.get("audio_codec", "pcm16"))
                 self._negotiated_audio_out = str(event.get("audio_out", "url"))
                 self.audio.set_negotiated_sample_rate(int(event.get("sample_rate") or self.config.input_sample_rate))
+                new_session_id = event.get("session_id")
+                if new_session_id and new_session_id != self._session_id:
+                    self._session_id = str(new_session_id)
+                    try:
+                        save_session_id(self.config.session_state_path, self._session_id)
+                    except Exception as exc:  # noqa: BLE001 - persistence must not break the session
+                        self.log(f"session_id persist failed: {exc}")
                 self._session_ready.set()
                 self.log(
                     "session started: "
@@ -270,6 +281,18 @@ class AudioToAudioService:
                     f"codec={self._negotiated_audio_codec} audio_out={self._negotiated_audio_out} "
                     f"sample_rate={self.audio.negotiated_sample_rate}"
                 )
+                # Missing keys (older server) default to ready, so behavior is
+                # unchanged against a server that doesn't send them yet.
+                engines_ready = event.get("stt_ready", True) and event.get("tts_ready", True)
+                if engines_ready:
+                    self._set_ready()
+                else:
+                    self.log("engines still warming up server-side — please wait before speaking")
+                    self.leds.warming()
+                    self.oled.warming()
+            elif name == "engines_ready":
+                self._cancel_idle_reset()
+                self.log("engines ready")
                 self._set_ready()
             elif name == "user_transcript":
                 text = (event.get("text") or "").strip()
@@ -303,8 +326,9 @@ class AudioToAudioService:
                 self.log(f"event: {name} payload={event}")
 
     async def run_forever(self) -> None:
-        ws_url = build_ws_url(self.config)
-        self.log(f"target websocket: {ws_url}")
+        self.log(f"target host: {self.config.host}:{self.config.port}")
+        if self._session_id:
+            self.log(f"resuming session: {self._session_id}")
 
         # Connect + start audio immediately; warm STT in the background instead of
         # blocking startup on it. The server also warms STT/TTS on WS connect, so this
@@ -324,9 +348,10 @@ class AudioToAudioService:
                 self._negotiated_audio_out = "opus"
                 self.leds.connecting()
                 self.oled.connecting()
+                ws_url = build_ws_url(self.config, session_id=self._session_id)
                 try:
                     async with websockets.connect(ws_url, max_size=None, ping_interval=20, ping_timeout=20) as ws:
-                        self.log("connected")
+                        self.log(f"connected: {ws_url}")
                         backoff = self.config.reconnect_initial_seconds
                         sender_task = asyncio.create_task(self.sender(ws))
                         receiver_task = asyncio.create_task(self.receiver(ws))

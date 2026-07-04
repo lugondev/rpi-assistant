@@ -72,6 +72,9 @@ class OledStatusController:
     def connecting(self) -> None:
         self.show("connecting", "")
 
+    def warming(self) -> None:
+        self.show("warming up", "please wait...")
+
     def ready(self) -> None:
         self.show("ready", "speak now")
 
