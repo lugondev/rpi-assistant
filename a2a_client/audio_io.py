@@ -263,6 +263,32 @@ class AudioIO:
         pcm_bytes = self.decoder.decode(packet, self.out_frame_samples)
         self.play_buffer.push(np.frombuffer(pcm_bytes, dtype=np.int16))
 
+    def play_tone(
+        self,
+        frequencies_hz: list[float],
+        tone_ms: int = 150,
+        gap_ms: int = 60,
+        level: float = 0.2,
+    ) -> None:
+        """Synthesize and queue a short local beep sequence.
+
+        Unlike play_wav_bytes/play_opus_frame, this needs no network round-trip or
+        TTS engine — it's the only way to give the user an audible cue (e.g. "please
+        wait, still starting up") while those are exactly what's cold-loading.
+        """
+        sr = self.config.output_sample_rate
+        tone_samples = max(1, int(sr * tone_ms / 1000))
+        gap_samples = max(0, int(sr * gap_ms / 1000))
+        chunks = []
+        for i, freq in enumerate(frequencies_hz):
+            t = np.arange(tone_samples) / sr
+            chunks.append((np.sin(2 * np.pi * freq * t) * level * 32767).astype(np.int16))
+            if gap_samples and i < len(frequencies_hz) - 1:
+                chunks.append(np.zeros(gap_samples, dtype=np.int16))
+        if not chunks:
+            return
+        self.play_buffer.push(np.concatenate(chunks))
+
     def play_wav_bytes(self, wav_data: bytes) -> None:
         """Decode a whole WAV (url/RIFF reply), resample to the output rate, and queue it
         into the jitter buffer — same playback path as Opus frames (callback-driven)."""

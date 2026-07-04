@@ -17,6 +17,11 @@ from .oled_status import OledConfig, OledStatusController
 from .session_state import load_session_id, save_session_id
 from .ws_protocol import build_ws_url
 
+# Local beeps (no network/TTS involved — audible even while those are cold-loading).
+_WARMING_TONE_HZ = [440.0, 440.0]  # two flat beeps: "still starting up, please wait"
+_READY_TONE_HZ = [523.0, 784.0]  # short rising chime: "ready now"
+_WARMING_REMINDER_SECONDS = 8.0  # repeat the cue while the user might keep talking
+
 
 class AudioToAudioService:
     def __init__(self, config: Config) -> None:
@@ -52,6 +57,7 @@ class AudioToAudioService:
         # Resume the same server-side session (and its chat history) across
         # reconnects and full restarts instead of minting a fresh one every time.
         self._session_id: str | None = load_session_id(config.session_state_path)
+        self._warming_reminder_task: asyncio.Task | None = None
 
     def log(self, message: str) -> None:
         now = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -70,6 +76,26 @@ class AudioToAudioService:
     def _schedule_ready_reset(self, delay: float = 1.5) -> None:
         self._cancel_idle_reset()
         self._idle_reset_handle = self.loop.call_later(delay, self._set_ready)
+
+    async def _warming_reminder_loop(self) -> None:
+        """Repeat the "please wait" beep while engines are still cold-loading —
+        the user may keep talking without it, having no other feedback (LED/OLED
+        are easy to miss on a voice-first device)."""
+        try:
+            while True:
+                await asyncio.sleep(_WARMING_REMINDER_SECONDS)
+                await asyncio.to_thread(self.audio.play_tone, _WARMING_TONE_HZ)
+        except asyncio.CancelledError:
+            raise
+
+    def _start_warming_reminder(self) -> None:
+        if self._warming_reminder_task is None or self._warming_reminder_task.done():
+            self._warming_reminder_task = asyncio.create_task(self._warming_reminder_loop())
+
+    def _stop_warming_reminder(self) -> None:
+        if self._warming_reminder_task is not None:
+            self._warming_reminder_task.cancel()
+            self._warming_reminder_task = None
 
     def _build_absolute_url(self, maybe_relative_url: str) -> str:
         if maybe_relative_url.startswith("http://") or maybe_relative_url.startswith("https://"):
@@ -290,9 +316,17 @@ class AudioToAudioService:
                     self.log("engines still warming up server-side — please wait before speaking")
                     self.leds.warming()
                     self.oled.warming()
+                    # Audible cue: LED/OLED are easy to miss on a voice-first device,
+                    # so beep now and keep reminding until engines_ready arrives —
+                    # otherwise the user has no idea why nothing is responding and
+                    # keeps talking into a pipeline that isn't ready yet.
+                    await asyncio.to_thread(self.audio.play_tone, _WARMING_TONE_HZ)
+                    self._start_warming_reminder()
             elif name == "engines_ready":
                 self._cancel_idle_reset()
+                self._stop_warming_reminder()
                 self.log("engines ready")
+                await asyncio.to_thread(self.audio.play_tone, _READY_TONE_HZ)
                 self._set_ready()
             elif name == "user_transcript":
                 text = (event.get("text") or "").strip()
@@ -369,6 +403,10 @@ class AudioToAudioService:
                     self.log(f"connection error: {exc}")
                     self.leds.error()
                     self.oled.error("WS ERR")
+                finally:
+                    # Don't let a stale reminder beep fire after we've disconnected —
+                    # the next connection's session_started will restart it if needed.
+                    self._stop_warming_reminder()
 
                 if self.stop_event.is_set():
                     break
