@@ -58,6 +58,12 @@ class AudioToAudioService:
         # reconnects and full restarts instead of minting a fresh one every time.
         self._session_id: str | None = load_session_id(config.session_state_path)
         self._warming_reminder_task: asyncio.Task | None = None
+        # False until session_started confirms both engines warm (or engines_ready
+        # arrives later). Gates every "things are fine" LED/OLED state so the first
+        # utterance — detected by the server's VAD, which needs no model at all —
+        # can't flip the display to "listening"/ready and hide that STT/TTS are
+        # still cold-loading underneath.
+        self._engines_ready = False
 
     def log(self, message: str) -> None:
         now = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -70,8 +76,25 @@ class AudioToAudioService:
 
     def _set_ready(self) -> None:
         self._idle_reset_handle = None
+        if not self._engines_ready:
+            self.leds.warming()
+            self.oled.warming()
+            return
         self.leds.ready()
         self.oled.ready()
+
+    def _status(self, kind: str) -> None:
+        """Reflect a turn-taking state on LED/OLED — unless engines are still
+        cold-loading, in which case keep showing "warming up" instead. Needed
+        because speech_start/speech_end etc. are driven by the server's VAD
+        endpointer, which needs no STT/TTS model and fires even on the very
+        first (still-cold) utterance."""
+        if not self._engines_ready:
+            self.leds.warming()
+            self.oled.warming()
+            return
+        getattr(self.leds, kind)()
+        getattr(self.oled, kind)()
 
     def _schedule_ready_reset(self, delay: float = 1.5) -> None:
         self._cancel_idle_reset()
@@ -239,26 +262,22 @@ class AudioToAudioService:
             name = event.get("event")
             if name == "speech_start":
                 self._cancel_idle_reset()
-                self.leds.listening()
-                self.oled.listening()
+                self._status("listening")
                 self._schedule_ready_reset()
             elif name == "speech_end":
                 self._cancel_idle_reset()
-                self.leds.processing()
-                self.oled.processing()
+                self._status("processing")
                 self._schedule_ready_reset()
             elif name == "audio_start":
                 self._cancel_idle_reset()
                 self.audio.set_speaking(True)
-                self.leds.speaking()
-                self.oled.speaking()
+                self._status("speaking")
                 self._schedule_ready_reset(delay=3.0)
             elif name == "audio_chunk":
                 audio_url = event.get("audio_url")
                 if audio_url:
                     self._cancel_idle_reset()
-                    self.leds.speaking()
-                    self.oled.speaking()
+                    self._status("speaking")
                     await self._play_audio_url(str(audio_url))
                     self._schedule_ready_reset(delay=3.0)
             elif name == "audio_end":
@@ -285,8 +304,7 @@ class AudioToAudioService:
                 self.oled.error("SERVER ERR")
             elif name == "processing":
                 self._cancel_idle_reset()
-                self.leds.processing()
-                self.oled.processing()
+                self._status("processing")
                 self._schedule_ready_reset()
             elif name == "session_started":
                 self._cancel_idle_reset()
@@ -309,8 +327,8 @@ class AudioToAudioService:
                 )
                 # Missing keys (older server) default to ready, so behavior is
                 # unchanged against a server that doesn't send them yet.
-                engines_ready = event.get("stt_ready", True) and event.get("tts_ready", True)
-                if engines_ready:
+                self._engines_ready = event.get("stt_ready", True) and event.get("tts_ready", True)
+                if self._engines_ready:
                     self._set_ready()
                 else:
                     self.log("engines still warming up server-side — please wait before speaking")
@@ -325,6 +343,7 @@ class AudioToAudioService:
             elif name == "engines_ready":
                 self._cancel_idle_reset()
                 self._stop_warming_reminder()
+                self._engines_ready = True
                 self.log("engines ready")
                 await asyncio.to_thread(self.audio.play_tone, _READY_TONE_HZ)
                 self._set_ready()
@@ -333,8 +352,7 @@ class AudioToAudioService:
                 if text:
                     self.log(f"you: {text}")
                     self._cancel_idle_reset()
-                    self.leds.listening()
-                    self.oled.listening()
+                    self._status("listening")
                     self._schedule_ready_reset()
                 else:
                     self._set_ready()
@@ -345,14 +363,12 @@ class AudioToAudioService:
                     self.log(f"assistant: {text}")
                 if audio_url:
                     self._cancel_idle_reset()
-                    self.leds.speaking()
-                    self.oled.speaking()
+                    self._status("speaking")
                     await self._play_audio_url(str(audio_url))
                     self._schedule_ready_reset(delay=3.0)
                 elif text:
                     self._cancel_idle_reset()
-                    self.leds.processing()
-                    self.oled.processing()
+                    self._status("processing")
                     self._schedule_ready_reset()
                 else:
                     self._set_ready()
