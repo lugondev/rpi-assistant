@@ -66,7 +66,10 @@ class AudioToAudioService:
         self._engines_ready = False
 
     def log(self, message: str) -> None:
-        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        # Millisecond precision: diagnosing first-turn latency needs sub-second
+        # deltas between events (connected -> session_started -> speech_end ->
+        # first response), which second-resolution timestamps can't show.
+        now = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + f".{int(time.time() * 1000) % 1000:03d}"
         print(f"[{now}] {message}", flush=True)
 
     def _cancel_idle_reset(self) -> None:
@@ -158,6 +161,7 @@ class AudioToAudioService:
 
     async def sender(self, ws: websockets.WebSocketClientProtocol) -> None:
         await self._session_ready.wait()
+        self.log("mic uplink starting")  # timing anchor for first-turn latency diagnosis
 
         buffer = bytearray()
         while not self.stop_event.is_set():
