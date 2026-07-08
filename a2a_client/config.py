@@ -13,10 +13,6 @@ class Config:
     host: str
     port: int
     secure: bool
-    stt_engine: str
-    tts_engine: str
-    language: str
-    voice: str | None
     profile: str | None
     output: str
     input_sample_rate: int
@@ -62,10 +58,6 @@ def load_config(path: str) -> Config:
         host=str(server.get("host", "127.0.0.1")),
         port=int(server.get("port", 8000)),
         secure=bool(server.get("secure", False)),
-        stt_engine=str(session.get("stt_engine", "whisper")),
-        tts_engine=str(session.get("tts_engine", "vieneu")),
-        language=str(session.get("language", "vi")),
-        voice=session.get("voice"),
         profile=session.get("profile"),
         output=str(session.get("output", "audio,text")),
         input_sample_rate=int(audio.get("input_sample_rate", 16000)),

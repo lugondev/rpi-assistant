@@ -131,14 +131,19 @@ class AudioToAudioService:
         return urllib.parse.urljoin(base, maybe_relative_url)
 
     def _warm_stt_engine(self) -> None:
-        warm_url = self._build_absolute_url(f"/v1/stt/warm?engine={urllib.parse.quote(self.config.stt_engine)}")
+        # The gateway resolves which STT model to warm from the profile (STT/TTS/LLM
+        # all live in the profile now), so we pass the profile, not an engine name.
+        # With no profile the server warms its own default engine.
+        label = self.config.profile or "server default"
+        query = f"?profile={urllib.parse.quote(self.config.profile)}" if self.config.profile else ""
+        warm_url = self._build_absolute_url(f"/v1/stt/warm{query}")
 
         try:
-            self.log(f"warming stt engine: {self.config.stt_engine}")
+            self.log(f"warming stt for profile: {label}")
             req = urllib.request.Request(warm_url, method="POST")
             with urllib.request.urlopen(req, timeout=60) as response:  # nosec B310
                 _ = response.read()
-            self.log(f"stt engine warmed: {self.config.stt_engine}")
+            self.log(f"stt warmed for profile: {label}")
         except Exception as exc:  # noqa: BLE001
             self.log(f"stt warm failed: {exc}")
 

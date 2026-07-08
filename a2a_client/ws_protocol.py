@@ -7,17 +7,15 @@ from .config import Config
 
 def build_ws_url(config: Config, session_id: str | None = None) -> str:
     scheme = "wss" if config.secure else "ws"
+    # STT engine + language, TTS voice/engine and the LLM all come from the profile
+    # server-side; the client sends only the profile id plus audio transport params.
     query = urlencode(
         {
-            "stt_engine": config.stt_engine,
-            "tts_engine": config.tts_engine,
-            "language": config.language,
             "sample_rate": config.uplink_sample_rate,
             "audio_codec": "opus",
             "output": config.output,
             "audio_out": "opus",
             "output_sample_rate": config.output_sample_rate,
-            **({"voice": config.voice} if config.voice else {}),
             **({"profile": config.profile} if config.profile else {}),
             **({"session_id": session_id} if session_id else {}),
         }

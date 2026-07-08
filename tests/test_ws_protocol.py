@@ -7,10 +7,6 @@ def _base_config(**overrides) -> Config:
         host="127.0.0.1",
         port=8000,
         secure=False,
-        stt_engine="whisper",
-        tts_engine="vieneu",
-        language="vi",
-        voice=None,
         profile=None,
         output="audio,text",
         input_sample_rate=16000,
@@ -57,3 +53,20 @@ def test_build_ws_url_includes_session_id_when_provided():
 def test_build_ws_url_omits_session_id_when_none_explicitly():
     url = build_ws_url(_base_config(), session_id=None)
     assert "session_id" not in url
+
+
+def test_build_ws_url_omits_engine_config():
+    # STT/TTS/language/voice come from the profile server-side; the client must not
+    # send them as query params.
+    url = build_ws_url(_base_config(profile="home"))
+    for param in ("stt_engine", "tts_engine", "language=", "voice="):
+        assert param not in url
+    assert "profile=home" in url
+    # transport params still present
+    assert "audio_codec=opus" in url
+    assert "sample_rate=" in url
+
+
+def test_build_ws_url_omits_profile_when_not_set():
+    url = build_ws_url(_base_config(profile=None))
+    assert "profile=" not in url

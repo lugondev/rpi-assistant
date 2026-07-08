@@ -167,14 +167,11 @@ server:
   secure: false                  # Set to true for wss://
 
 session:
-  stt_engine: qwen_asr           # or whisper_mlx, etc.
-  tts_engine: vieneu             # Vietnamese TTS
-  language: vi
+  profile: my-assistant          # named profile (POST /v1/profiles or control panel).
+                                  # Owns STT engine + language, TTS voice, LLM model/
+                                  # system prompt, MCP tools and memory. null = server
+                                  # .env defaults.
   output: audio,text             # Get both audio reply and text
-  profile: null                  # optional: named profile (POST /v1/profiles) —
-                                  # overrides LLM model/system prompt/TTS/MCP/memory;
-                                  # stt_engine/language above still apply unless the
-                                  # profile name matches a language preset (vi/en/multi/en_vi)
 
 audio:
   input_sample_rate: 16000       # Mic sample rate (Hz)
