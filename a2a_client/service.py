@@ -15,6 +15,7 @@ from .config import Config
 from .led_status import LedConfig, LedStatusController
 from .oled_status import OledConfig, OledStatusController
 from .lugo_frame import LUGO_FRAME_OPUS, decode_frame
+from .mcp_tools import McpToolContext, handle_mcp_request
 from .session_state import load_session_id, save_session_id
 from .ws_protocol import build_ws_url, build_wakeup_message
 
@@ -63,6 +64,9 @@ class AudioToAudioService:
         # can't flip the display to "listening"/ready and hide that STT/TTS are
         # still cold-loading underneath.
         self._engines_ready = False
+        self._start_time = time.monotonic()
+        self._idle = False
+        self._idle_wake_frames = 0
 
     def log(self, message: str) -> None:
         # Millisecond precision: diagnosing first-turn latency needs sub-second
@@ -129,6 +133,27 @@ class AudioToAudioService:
         base = f"{scheme}://{self.config.host}:{self.config.port}"
         return urllib.parse.urljoin(base, maybe_relative_url)
 
+    def _mcp_context(self) -> McpToolContext:
+        return McpToolContext(
+            get_volume_pct=self.audio.get_volume_pct,
+            set_volume_pct=self.audio.set_volume_pct,
+            uptime_seconds=lambda: time.monotonic() - self._start_time,
+            go_idle=self._go_idle,
+            show_text=self._show_text_overlay,
+        )
+
+    def _go_idle(self) -> None:
+        self._idle = True
+        self._idle_wake_frames = 0
+        self._cancel_idle_reset()
+        self.leds.stopped()
+        self.oled.show("idle", "say something")
+
+    def _show_text_overlay(self, line1: str, line2: str) -> None:
+        self._cancel_idle_reset()
+        self.oled.show(line1, line2)
+        self._schedule_ready_reset(delay=5.0)
+
     def _warm_stt_engine(self) -> None:
         # The gateway resolves which STT model to warm from the profile (STT/TTS/LLM
         # all live in the profile now), so we pass the profile, not an engine name.
@@ -161,6 +186,23 @@ class AudioToAudioService:
             while len(buffer) >= self.audio.in_frame_bytes:
                 pcm_frame = bytes(buffer[: self.audio.in_frame_bytes])
                 del buffer[: self.audio.in_frame_bytes]
+
+                # Idle gate: while self.device.idle is active, drop uplink frames until a
+                # loud sound (same RMS detector used for barge-in) wakes the device — there
+                # is no physical wake button on this client, so voice is the only trigger.
+                if self._idle:
+                    samples = np.frombuffer(pcm_frame, dtype=np.int16)
+                    rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2))) if len(samples) else 0.0
+                    if rms >= self.config.barge_in_rms_threshold:
+                        self._idle_wake_frames += 1
+                    else:
+                        self._idle_wake_frames = 0
+                    if self._idle_wake_frames < self.config.barge_in_min_frames:
+                        continue
+                    self._idle_wake_frames = 0
+                    self._idle = False
+                    self.log("idle: woke on loud sound")
+                    self._set_ready()
 
                 # Half-duplex / barge-in gating. While the assistant is playing we
                 # normally drop mic frames (the speaker would bleed into the mic). If
@@ -317,6 +359,10 @@ class AudioToAudioService:
                 self.log("engines ready")
                 await asyncio.to_thread(self.audio.play_tone, _READY_TONE_HZ)
                 self._set_ready()
+            elif name == "mcp":
+                payload = event.get("payload") or {}
+                response = handle_mcp_request(payload, self._mcp_context())
+                await ws.send(json.dumps({"type": "mcp", "payload": response}))
             elif name == "goodbye":
                 self.log(f"server goodbye: {event.get('reason', '')}")
             elif name == "error":
@@ -346,8 +392,6 @@ class AudioToAudioService:
         try:
             while not self.stop_event.is_set():
                 self._session_ready.clear()
-                self._negotiated_audio_codec = "opus"
-                self._negotiated_audio_out = "opus"
                 self.leds.connecting()
                 self.oled.connecting()
                 ws_url = build_ws_url(self.config)
