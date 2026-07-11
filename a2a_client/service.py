@@ -244,7 +244,7 @@ class AudioToAudioService:
                 self.log(f"non-json message: {message}")
                 continue
 
-            name = event.get("event")
+            name = event.get("type")
             if name == "speech_start":
                 self._cancel_idle_reset()
                 self._status("listening")
@@ -253,49 +253,41 @@ class AudioToAudioService:
                 self._cancel_idle_reset()
                 self._status("processing")
                 self._schedule_ready_reset()
-            elif name == "audio_start":
-                self._cancel_idle_reset()
-                self.audio.set_speaking(True)
-                self._status("speaking")
-                self._schedule_ready_reset(delay=3.0)
-            elif name == "audio_chunk":
-                audio_url = event.get("audio_url")
-                if audio_url:
-                    self._cancel_idle_reset()
-                    self._status("speaking")
-                    await self._play_audio_url(str(audio_url))
-                    self._schedule_ready_reset(delay=3.0)
-            elif name == "audio_end":
-                # End of one sentence — let the queued tail finish playing; the next
-                # sentence (if any) keeps the buffer fed. Don't stop here.
-                self._cancel_idle_reset()
-                self._schedule_ready_reset(delay=3.0)
-            elif name == "turn_done":
-                self._cancel_idle_reset()
-                self.audio.set_speaking(False)  # buffer drains naturally; mic re-enables when empty
-                if self.config.log_events:
-                    # Diagnostic: rising underrun = playback was starved (network/pacing);
-                    # ~0 = smooth. Helps tell client-side starvation from server-side gaps.
-                    self.log(f"playback underrun total: {self.audio.play_buffer.underrun_samples} samples")
-                self._set_ready()
-            elif name in {"aborted", "reset"}:
-                self._cancel_idle_reset()
-                self.audio.reset_playback()  # interrupt: drop queued audio immediately
-                self._set_ready()
-            elif name == "error":
-                self._cancel_idle_reset()
-                self.log(f"server error: {event.get('message', 'unknown')}")
-                self.leds.error()
-                self.oled.error("SERVER ERR")
             elif name == "processing":
                 self._cancel_idle_reset()
                 self._status("processing")
                 self._schedule_ready_reset()
-            elif name == "session_started":
+            elif name == "stt":
+                text = (event.get("text") or "").strip()
+                if text:
+                    self.log(f"you: {text}")
+                    self._cancel_idle_reset()
+                    self._status("listening")
+                    self._schedule_ready_reset()
+                else:
+                    self._set_ready()
+            elif name == "tts":
+                state = event.get("state")
+                if state == "start":
+                    self._cancel_idle_reset()
+                    self.audio.set_speaking(True)
+                    self._status("speaking")
+                    self._schedule_ready_reset(delay=3.0)
+                elif state == "sentence_start":
+                    text = (event.get("text") or "").strip()
+                    if text:
+                        self.log(f"assistant: {text}")
+                elif state == "stop":
+                    self._cancel_idle_reset()
+                    if event.get("reason"):
+                        self.audio.reset_playback()  # interrupt: drop queued audio immediately
+                    else:
+                        self.audio.set_speaking(False)  # buffer drains naturally
+                        if self.config.log_events:
+                            self.log(f"playback underrun total: {self.audio.play_buffer.underrun_samples} samples")
+                    self._set_ready()
+            elif name == "welcome":
                 self._cancel_idle_reset()
-                self._negotiated_audio_codec = str(event.get("audio_codec", "pcm16"))
-                self._negotiated_audio_out = str(event.get("audio_out", "url"))
-                self.audio.set_negotiated_sample_rate(int(event.get("sample_rate") or self.config.input_sample_rate))
                 new_session_id = event.get("session_id")
                 if new_session_id and new_session_id != self._session_id:
                     self._session_id = str(new_session_id)
@@ -303,13 +295,10 @@ class AudioToAudioService:
                         save_session_id(self.config.session_state_path, self._session_id)
                     except Exception as exc:  # noqa: BLE001 - persistence must not break the session
                         self.log(f"session_id persist failed: {exc}")
+                out_sr = int((event.get("audio_params") or {}).get("sample_rate") or self.config.output_sample_rate)
+                self.audio.set_negotiated_sample_rate(out_sr)
                 self._session_ready.set()
-                self.log(
-                    "session started: "
-                    f"stt={event.get('stt_engine')} tts={event.get('tts_engine')} "
-                    f"codec={self._negotiated_audio_codec} audio_out={self._negotiated_audio_out} "
-                    f"sample_rate={self.audio.negotiated_sample_rate}"
-                )
+                self.log(f"session started: session_id={self._session_id} output_sample_rate={out_sr}")
                 # Missing keys (older server) default to ready, so behavior is
                 # unchanged against a server that doesn't send them yet.
                 self._engines_ready = event.get("stt_ready", True) and event.get("tts_ready", True)
@@ -319,10 +308,6 @@ class AudioToAudioService:
                     self.log("engines still warming up server-side — please wait before speaking")
                     self.leds.warming()
                     self.oled.warming()
-                    # Audible cue: LED/OLED are easy to miss on a voice-first device,
-                    # so beep now and keep reminding until engines_ready arrives —
-                    # otherwise the user has no idea why nothing is responding and
-                    # keeps talking into a pipeline that isn't ready yet.
                     await asyncio.to_thread(self.audio.play_tone, _WARMING_TONE_HZ)
                     self._start_warming_reminder()
             elif name == "engines_ready":
@@ -332,31 +317,13 @@ class AudioToAudioService:
                 self.log("engines ready")
                 await asyncio.to_thread(self.audio.play_tone, _READY_TONE_HZ)
                 self._set_ready()
-            elif name == "user_transcript":
-                text = (event.get("text") or "").strip()
-                if text:
-                    self.log(f"you: {text}")
-                    self._cancel_idle_reset()
-                    self._status("listening")
-                    self._schedule_ready_reset()
-                else:
-                    self._set_ready()
-            elif name == "response_text":
-                text = (event.get("text") or "").strip()
-                audio_url = event.get("audio_url")
-                if text:
-                    self.log(f"assistant: {text}")
-                if audio_url:
-                    self._cancel_idle_reset()
-                    self._status("speaking")
-                    await self._play_audio_url(str(audio_url))
-                    self._schedule_ready_reset(delay=3.0)
-                elif text:
-                    self._cancel_idle_reset()
-                    self._status("processing")
-                    self._schedule_ready_reset()
-                else:
-                    self._set_ready()
+            elif name == "goodbye":
+                self.log(f"server goodbye: {event.get('reason', '')}")
+            elif name == "error":
+                self._cancel_idle_reset()
+                self.log(f"server error: {event.get('message', 'unknown')}")
+                self.leds.error()
+                self.oled.error("SERVER ERR")
             elif self.config.log_events:
                 self.log(f"event: {name} payload={event}")
 
