@@ -50,7 +50,11 @@ class McpToolContext:
 
 
 def _error_result(message: str) -> dict:
-    return {"isError": True, "content": [{"type": "text", "text": message}]}
+    return {
+        "isError": True,
+        "error": message,
+        "content": [{"type": "text", "text": message}],
+    }
 
 
 def _ok_result(text: str) -> dict:

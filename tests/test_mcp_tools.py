@@ -96,6 +96,19 @@ def test_set_volume_missing_argument_returns_error():
     assert fake.volume == 100  # unchanged
 
 
+def test_set_volume_missing_argument_error_has_error_key():
+    ctx, _ = _ctx()
+    resp = handle_mcp_request(
+        {"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+         "params": {"name": "self.audio.set_volume", "arguments": {}}},
+        ctx,
+    )
+    result = resp["result"]
+    assert result["isError"] is True
+    assert "error" in result
+    assert result["error"] == result["content"][0]["text"]
+
+
 def test_device_idle_calls_context():
     ctx, fake = _ctx()
     handle_mcp_request(
