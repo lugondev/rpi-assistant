@@ -14,8 +14,9 @@ from .audio_io import AudioIO
 from .config import Config
 from .led_status import LedConfig, LedStatusController
 from .oled_status import OledConfig, OledStatusController
+from .lugo_frame import LUGO_FRAME_OPUS, decode_frame
 from .session_state import load_session_id, save_session_id
-from .ws_protocol import build_ws_url
+from .ws_protocol import build_ws_url, build_wakeup_message
 
 # Local beeps (no network/TTS involved — audible even while those are cold-loading).
 _WARMING_TONE_HZ = [440.0, 440.0]  # two flat beeps: "still starting up, please wait"
@@ -48,8 +49,6 @@ class AudioToAudioService:
             logger=self.log,
         )
         self._session_ready = asyncio.Event()
-        self._negotiated_audio_codec = "opus"
-        self._negotiated_audio_out = "opus"
         self._uplink_frames_sent = 0
         self._last_uplink_log_at = 0.0
         self._idle_reset_handle: asyncio.TimerHandle | None = None
@@ -147,23 +146,6 @@ class AudioToAudioService:
         except Exception as exc:  # noqa: BLE001
             self.log(f"stt warm failed: {exc}")
 
-    async def _play_audio_url(self, maybe_relative_url: str) -> None:
-        audio_url = self._build_absolute_url(maybe_relative_url)
-
-        def _download() -> bytes:
-            with urllib.request.urlopen(audio_url, timeout=20) as response:  # nosec B310
-                return response.read()
-
-        self.audio.set_speaking(True)
-        try:
-            wav_data = await asyncio.to_thread(_download)
-            # Queue into the jitter buffer; the output callback plays it out (the buffer
-            # staying non-empty keeps is_playing() true until it actually finishes).
-            await asyncio.to_thread(self.audio.play_wav_bytes, wav_data)
-        except Exception as exc:  # noqa: BLE001
-            self.log(f"audio url playback error: {exc}")
-            self.oled.error("AUDIO ERR")
-
     async def sender(self, ws: websockets.WebSocketClientProtocol) -> None:
         await self._session_ready.wait()
         self.log("mic uplink starting")  # timing anchor for first-turn latency diagnosis
@@ -207,19 +189,12 @@ class AudioToAudioService:
                     self._barge_frames = 0
 
                 try:
-                    if self._negotiated_audio_codec == "opus":
-                        pcm_frame = self.audio.resample_pcm16_mono(
-                            pcm_frame,
-                            source_rate=self.config.input_sample_rate,
-                            target_rate=self.config.uplink_sample_rate,
-                        )
-                        packet = self.audio.encode_frame(pcm_frame)
-                    else:
-                        packet = self.audio.resample_pcm16_mono(
-                            pcm_frame,
-                            source_rate=self.config.input_sample_rate,
-                            target_rate=self.config.uplink_sample_rate,
-                        )
+                    pcm_frame = self.audio.resample_pcm16_mono(
+                        pcm_frame,
+                        source_rate=self.config.input_sample_rate,
+                        target_rate=self.config.uplink_sample_rate,
+                    )
+                    packet = self.audio.encode_frame(pcm_frame)
                     await ws.send(packet)
                     self._uplink_frames_sent += 1
                     if self.config.log_events:
@@ -230,7 +205,7 @@ class AudioToAudioService:
                             rms = float(np.sqrt(np.mean(samples.astype(np.float32) ** 2))) if len(samples) else 0.0
                             self.log(
                                 "uplink sent: "
-                                f"frames={self._uplink_frames_sent} codec={self._negotiated_audio_codec} "
+                                f"frames={self._uplink_frames_sent} codec=opus "
                                 f"bytes={len(packet)} rms={rms:.1f}"
                             )
                 except Exception as exc:  # noqa: BLE001
@@ -250,16 +225,17 @@ class AudioToAudioService:
                 return
 
             if isinstance(message, bytes):
-                if message.startswith(b"RIFF"):
-                    self.audio.set_speaking(True)
-                    await asyncio.to_thread(self.audio.play_wav_bytes, message)
+                try:
+                    frame_type, opus_payload = decode_frame(message)
+                except ValueError as exc:
+                    self.log(f"bad downlink frame: {exc}")
                     continue
-                if self._negotiated_audio_out != "opus":
+                if frame_type != LUGO_FRAME_OPUS:
                     continue
                 # Decode + queue the Opus frame; the output callback plays it from the
                 # jitter buffer at a steady rate (seamless across network jitter).
                 self.audio.set_speaking(True)
-                self.audio.play_opus_frame(message)
+                self.audio.play_opus_frame(opus_payload)
                 continue
 
             try:
@@ -407,10 +383,11 @@ class AudioToAudioService:
                 self._negotiated_audio_out = "opus"
                 self.leds.connecting()
                 self.oled.connecting()
-                ws_url = build_ws_url(self.config, session_id=self._session_id)
+                ws_url = build_ws_url(self.config)
                 try:
                     async with websockets.connect(ws_url, max_size=None, ping_interval=20, ping_timeout=20) as ws:
                         self.log(f"connected: {ws_url}")
+                        await ws.send(json.dumps(build_wakeup_message(self.config, self._session_id)))
                         backoff = self.config.reconnect_initial_seconds
                         sender_task = asyncio.create_task(self.sender(ws))
                         receiver_task = asyncio.create_task(self.receiver(ws))
