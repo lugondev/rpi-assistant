@@ -48,6 +48,7 @@ class AudioIO:
         self.encoder: opuslib.Encoder | None = None
         self.decoder: opuslib.Decoder | None = None
         self.negotiated_sample_rate = self.config.input_sample_rate
+        self.volume_pct = 100  # software playback gain, 0-100; set via MCP self.audio.set_volume
 
         self.in_frame_samples = int(self.config.input_sample_rate * self.config.frame_ms / 1000)
         self.uplink_frame_samples = int(self.config.uplink_sample_rate * self.config.frame_ms / 1000)
@@ -176,6 +177,8 @@ class AudioIO:
     def on_output_audio(self, outdata: np.ndarray, frames: int, _time: Any, status: sd.CallbackFlags) -> None:
         """PortAudio pulls a steady block from the jitter buffer (silence if underrun)."""
         mono = self.play_buffer.pull(frames)
+        if self.volume_pct != 100:
+            mono = (mono.astype(np.float32) * (self.volume_pct / 100.0)).astype(np.int16)
         if self.config.output_channels == 1:
             outdata[:, 0] = mono
         else:
@@ -237,6 +240,12 @@ class AudioIO:
 
     def set_negotiated_sample_rate(self, sample_rate: int) -> None:
         self.negotiated_sample_rate = max(8000, int(sample_rate))
+
+    def get_volume_pct(self) -> int:
+        return self.volume_pct
+
+    def set_volume_pct(self, pct: int) -> None:
+        self.volume_pct = max(0, min(100, int(pct)))
 
     def get_mic_frame(self, timeout: float = 0.5) -> bytes:
         return self.mic_pcm_queue.get(timeout=timeout)
