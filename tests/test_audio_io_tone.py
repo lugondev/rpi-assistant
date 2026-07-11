@@ -10,7 +10,6 @@ def _config(**overrides) -> Config:
         port=8000,
         secure=False,
         profile=None,
-        output="audio,text",
         input_sample_rate=16000,
         output_sample_rate=16000,
         uplink_sample_rate=16000,

@@ -7,7 +7,7 @@ from a2a_client.config import Config
 def _config(**overrides) -> Config:
     defaults = dict(
         host="127.0.0.1", port=8000, secure=False, profile=None,
-        output="audio,text", input_sample_rate=16000, output_sample_rate=16000,
+        input_sample_rate=16000, output_sample_rate=16000,
         uplink_sample_rate=16000, frame_ms=60, input_channels=1, output_channels=1,
         input_device=None, output_device=None, playback_preroll_ms=200,
         allow_barge_in=False, barge_in_rms_threshold=1200.0, barge_in_min_frames=5,

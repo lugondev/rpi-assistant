@@ -9,7 +9,6 @@ session:
   # — so this device configures only which profile to connect to, not the engines.
   # Leave null to fall back to the server's own .env defaults.
   profile: null
-  output: audio,text
   # Barge-in: let the user interrupt the assistant by speaking over it. Needs a mic
   # well-isolated from the speaker (or hardware AEC) — otherwise speaker bleed
   # self-triggers it. Off by default; tune the RMS threshold to your hardware.

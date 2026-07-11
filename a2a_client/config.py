@@ -14,7 +14,6 @@ class Config:
     port: int
     secure: bool
     profile: str | None
-    output: str
     input_sample_rate: int
     output_sample_rate: int
     uplink_sample_rate: int
@@ -59,7 +58,6 @@ def load_config(path: str) -> Config:
         port=int(server.get("port", 8000)),
         secure=bool(server.get("secure", False)),
         profile=session.get("profile"),
-        output=str(session.get("output", "audio,text")),
         input_sample_rate=int(audio.get("input_sample_rate", 16000)),
         output_sample_rate=int(audio.get("output_sample_rate", 16000)),
         uplink_sample_rate=int(audio.get("uplink_sample_rate", 16000)),

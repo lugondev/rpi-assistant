@@ -13,7 +13,6 @@ def build_ws_url(config: Config, session_id: str | None = None) -> str:
         {
             "sample_rate": config.uplink_sample_rate,
             "audio_codec": "opus",
-            "output": config.output,
             "audio_out": "opus",
             "output_sample_rate": config.output_sample_rate,
             **({"profile": config.profile} if config.profile else {}),
