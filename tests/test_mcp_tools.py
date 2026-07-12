@@ -109,6 +109,75 @@ def test_set_volume_missing_argument_error_has_error_key():
     assert result["error"] == result["content"][0]["text"]
 
 
+def test_set_volume_delta_increases_from_current_volume():
+    ctx, fake = _ctx()
+    fake.volume = 50
+    resp = handle_mcp_request(
+        {"jsonrpc": "2.0", "id": 20, "method": "tools/call",
+         "params": {"name": "self.audio.set_volume", "arguments": {"delta": 10}}},
+        ctx,
+    )
+    assert fake.volume == 60
+    assert "60" in resp["result"]["content"][0]["text"]
+    assert not resp["result"].get("isError")
+
+
+def test_set_volume_delta_decreases_from_current_volume():
+    ctx, fake = _ctx()
+    fake.volume = 50
+    resp = handle_mcp_request(
+        {"jsonrpc": "2.0", "id": 21, "method": "tools/call",
+         "params": {"name": "self.audio.set_volume", "arguments": {"delta": -20}}},
+        ctx,
+    )
+    assert fake.volume == 30
+    assert "30" in resp["result"]["content"][0]["text"]
+
+
+def test_set_volume_delta_clamps_at_100():
+    ctx, fake = _ctx()
+    fake.volume = 95
+    handle_mcp_request(
+        {"jsonrpc": "2.0", "id": 22, "method": "tools/call",
+         "params": {"name": "self.audio.set_volume", "arguments": {"delta": 10}}},
+        ctx,
+    )
+    assert fake.volume == 100
+
+
+def test_set_volume_delta_clamps_at_0():
+    ctx, fake = _ctx()
+    fake.volume = 5
+    handle_mcp_request(
+        {"jsonrpc": "2.0", "id": 23, "method": "tools/call",
+         "params": {"name": "self.audio.set_volume", "arguments": {"delta": -20}}},
+        ctx,
+    )
+    assert fake.volume == 0
+
+
+def test_set_volume_both_volume_and_delta_returns_error():
+    ctx, fake = _ctx()
+    resp = handle_mcp_request(
+        {"jsonrpc": "2.0", "id": 24, "method": "tools/call",
+         "params": {"name": "self.audio.set_volume", "arguments": {"volume": 50, "delta": 10}}},
+        ctx,
+    )
+    assert resp["result"]["isError"] is True
+    assert fake.volume == 100  # unchanged
+
+
+def test_set_volume_neither_volume_nor_delta_returns_error():
+    ctx, fake = _ctx()
+    resp = handle_mcp_request(
+        {"jsonrpc": "2.0", "id": 25, "method": "tools/call",
+         "params": {"name": "self.audio.set_volume", "arguments": {}}},
+        ctx,
+    )
+    assert resp["result"]["isError"] is True
+    assert fake.volume == 100  # unchanged
+
+
 def test_device_idle_calls_context():
     ctx, fake = _ctx()
     handle_mcp_request(

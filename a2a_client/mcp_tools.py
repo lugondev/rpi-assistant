@@ -11,11 +11,16 @@ TOOL_DEFS: list[dict] = [
     },
     {
         "name": "self.audio.set_volume",
-        "description": "Set the speaker volume as a percentage (0-100).",
+        "description": (
+            "Set the speaker volume. Provide either volume (absolute percentage 0-100) "
+            "or delta (relative change, e.g. +10 or -10) — not both."
+        ),
         "inputSchema": {
             "type": "object",
-            "properties": {"volume": {"type": "integer", "minimum": 0, "maximum": 100}},
-            "required": ["volume"],
+            "properties": {
+                "volume": {"type": "integer", "minimum": 0, "maximum": 100},
+                "delta": {"type": "integer", "minimum": -100, "maximum": 100},
+            },
         },
     },
     {
@@ -68,9 +73,18 @@ def _call_tool(name: str, args: dict, ctx: McpToolContext) -> dict:
         if name == "self.get_device_status":
             text = f"volume={ctx.get_volume_pct()}% uptime={ctx.uptime_seconds():.0f}s"
         elif name == "self.audio.set_volume":
-            volume = max(0, min(100, int(args["volume"])))
-            ctx.set_volume_pct(volume)
-            text = f"volume set to {volume}%"
+            has_volume = "volume" in args
+            has_delta = "delta" in args
+            if has_volume and has_delta:
+                return _error_result("provide either volume or delta, not both")
+            if not has_volume and not has_delta:
+                return _error_result("missing volume or delta")
+            if has_volume:
+                new_volume = max(0, min(100, int(args["volume"])))
+            else:
+                new_volume = max(0, min(100, ctx.get_volume_pct() + int(args["delta"])))
+            ctx.set_volume_pct(new_volume)
+            text = f"volume set to {new_volume}%"
         elif name == "self.device.idle":
             ctx.go_idle()
             text = "device is now idle"
