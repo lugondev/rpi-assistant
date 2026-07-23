@@ -59,3 +59,15 @@ def test_build_wakeup_message_omits_profile_when_not_set():
 def test_build_wakeup_message_includes_profile_when_set():
     msg = build_wakeup_message(_base_config(profile="home"), session_id=None)
     assert msg["profile"] == "home"
+
+
+def test_build_ws_url_without_token():
+    assert build_ws_url(_base_config()) == "ws://127.0.0.1:8000/v1/lugo/stream"
+
+
+def test_build_ws_url_with_token():
+    assert build_ws_url(_base_config(), "TOK") == "ws://127.0.0.1:8000/v1/lugo/stream?device_token=TOK"
+
+
+def test_build_ws_url_empty_token_omitted():
+    assert build_ws_url(_base_config(), "") == "ws://127.0.0.1:8000/v1/lugo/stream"

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import urllib.parse
+
 from .config import Config
 
 
-def build_ws_url(config: Config) -> str:
+def build_ws_url(config: Config, device_token: str | None = None) -> str:
     scheme = "wss" if config.secure else "ws"
-    return f"{scheme}://{config.host}:{config.port}/v1/lugo/stream"
+    url = f"{scheme}://{config.host}:{config.port}/v1/lugo/stream"
+    if device_token:
+        url += "?" + urllib.parse.urlencode({"device_token": device_token})
+    return url
 
 
 def build_wakeup_message(config: Config, session_id: str | None) -> dict:
