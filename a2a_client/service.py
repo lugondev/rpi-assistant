@@ -443,7 +443,9 @@ class AudioToAudioService:
                 ws_url = build_ws_url(self.config, self._device_token)
                 try:
                     async with websockets.connect(ws_url, max_size=None, ping_interval=20, ping_timeout=20) as ws:
-                        self.log(f"connected: {ws_url}")
+                        # Log a token-less URL -- ws_url itself carries the raw bearer
+                        # device_token in its query string and must never hit the log.
+                        self.log(f"connected: {build_ws_url(self.config)}")
                         await ws.send(json.dumps(build_wakeup_message(self.config, self._session_id)))
                         backoff = self.config.reconnect_initial_seconds
                         sender_task = asyncio.create_task(self.sender(ws))
@@ -459,6 +461,10 @@ class AudioToAudioService:
                 except asyncio.CancelledError:
                     raise
                 except websockets.exceptions.InvalidStatus as exc:
+                    # Requires websockets>=14 (the asyncio client). On 12.x/13.x the
+                    # legacy client raises InvalidStatusCode instead (not a subclass of
+                    # this), which would silently miss 401/403 revoke detection -- see
+                    # rpi-assistant/requirements.txt pin.
                     handshake_status = exc.response.status_code
                     self.log(f"handshake rejected: {handshake_status}")
                 except Exception as exc:  # noqa: BLE001

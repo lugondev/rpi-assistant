@@ -1,7 +1,6 @@
 import io
 import json
 import urllib.error
-import pytest
 from a2a_client import pairing
 
 
@@ -56,10 +55,8 @@ def test_run_pairing_reinits_on_expiry():
         ("init", {"code": "222222", "poll_token": "p2"}),
         ("claimed", {"claimed": True, "device_id": "d", "token": "TOK2"}),
     ])
-    state = {"cur": None}
 
     def opener(req, timeout=0):
-        import urllib.error
         kind, data = next(seq)
         if kind == "init":
             return _json_resp({"success": True, "data": data})
@@ -73,3 +70,30 @@ def test_run_pairing_reinits_on_expiry():
     )
     assert token == "TOK2"
     assert shown == ["111111", "222222"]
+
+
+def test_run_pairing_retries_on_pair_init_network_error():
+    # DNS failure / connection refused / gateway down at boot: pair_init should
+    # be retried with backoff, not propagate and crash the caller.
+    shown = []
+    sleeps = []
+    calls = {"init": 0}
+
+    def opener(req, timeout=0):
+        if req.full_url.endswith("/pair/init"):
+            calls["init"] += 1
+            if calls["init"] < 3:
+                raise urllib.error.URLError("gateway down")
+            return _json_resp({"success": True, "data": {"code": "555555", "poll_token": "pt"}})
+        # First status poll reports claimed so the test needn't also drive polling.
+        return _json_resp({"success": True, "data": {"claimed": True, "device_id": "d", "token": "TOK3"}})
+
+    token = pairing.run_pairing(
+        "http://h:8000", "srl",
+        show_code=shown.append, sleep=sleeps.append, opener=opener, poll_interval=1.5,
+    )
+
+    assert token == "TOK3"
+    assert shown == ["555555"]
+    assert calls["init"] == 3
+    assert sleeps == [1.5, 1.5]
