@@ -40,6 +40,8 @@ class Config:
     oled_i2c_address: int
     oled_font_path: str
     session_state_path: str
+    device_token: str | None
+    device_token_path: str
 
 
 def load_config(path: str) -> Config:
@@ -52,6 +54,15 @@ def load_config(path: str) -> Config:
     service = raw.get("service", {})
     led = raw.get("led", {})
     oled = raw.get("oled", {})
+
+    _default_token_path = os.path.join(
+        os.path.dirname(
+            os.path.expanduser(
+                str(session.get("session_state_path", _DEFAULT_SESSION_STATE_PATH))
+            )
+        ),
+        "device_token",
+    )
 
     return Config(
         host=str(server.get("host", "127.0.0.1")),
@@ -85,5 +96,9 @@ def load_config(path: str) -> Config:
         oled_font_path=str(oled.get("font_path", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")),
         session_state_path=os.path.expanduser(
             str(session.get("session_state_path", _DEFAULT_SESSION_STATE_PATH))
+        ),
+        device_token=server.get("device_token"),
+        device_token_path=os.path.expanduser(
+            str(server.get("device_token_path", _default_token_path))
         ),
     )

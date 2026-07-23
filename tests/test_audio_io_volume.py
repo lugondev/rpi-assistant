@@ -16,6 +16,7 @@ def _config(**overrides) -> Config:
         input_alsa_device=None, output_alsa_device=None, oled_enabled=False,
         oled_i2c_port=1, oled_i2c_address=0x3C, oled_font_path="",
         session_state_path="/tmp/does-not-matter",
+        device_token=None, device_token_path="/tmp/device_token",
     )
     defaults.update(overrides)
     return Config(**defaults)

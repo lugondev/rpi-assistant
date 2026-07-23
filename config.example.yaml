@@ -2,6 +2,8 @@ server:
   host: 192.168.30.133
   port: 8000
   secure: false
+  # device_token: ""          # dev/legacy override; if set, skips pairing
+  # device_token_path: ""     # defaults next to session_state_path
 
 session:
   # Named profile (created via POST /v1/profiles or the control panel). It owns the
