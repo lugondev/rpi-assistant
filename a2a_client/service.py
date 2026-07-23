@@ -13,7 +13,7 @@ import websockets
 from .audio_io import AudioIO
 from .config import Config
 from .device_identity import read_device_serial, load_device_token, save_device_token, clear_device_token
-from .disconnect import classify_disconnect, REPAIR
+from .disconnect import classify_disconnect, REPAIR, RECONNECT
 from .led_status import LedConfig, LedStatusController
 from .oled_status import OledConfig, OledStatusController
 from .lugo_frame import LUGO_FRAME_OPUS, decode_frame
@@ -199,6 +199,13 @@ class AudioToAudioService:
     def on_disconnect(self, handshake_status: int | None, goodbye_reason: str | None) -> str:
         action = classify_disconnect(handshake_status, goodbye_reason)
         if action == REPAIR:
+            if self.config.device_token:
+                # Override mode: the configured token is static and was rejected by the
+                # server. We cannot re-pair it away -- that is an operator/config problem.
+                # Fall back to a throttled reconnect (RECONNECT) so we retry with backoff
+                # instead of hot-looping, and log loudly.
+                self.log("configured device_token was rejected by server -- check config; retrying with backoff")
+                return RECONNECT
             clear_device_token(self.config.device_token_path)
             self._device_token = None
             self.log("device token revoked by server -- will re-pair")

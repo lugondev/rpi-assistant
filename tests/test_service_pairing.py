@@ -27,9 +27,13 @@ class FakeService:
         return tok
 
     def on_disconnect(self, handshake_status, goodbye_reason):
-        from a2a_client.disconnect import classify_disconnect, REPAIR
+        from a2a_client.disconnect import classify_disconnect, REPAIR, RECONNECT
         action = classify_disconnect(handshake_status, goodbye_reason)
         if action == REPAIR:
+            if self.override:
+                # Override mode: the configured token is static and cannot be re-paired
+                # away -- throttle instead of hot-looping on a rejected dead token.
+                return RECONNECT
             self._di.clear_device_token(self.token_path)
             self._device_token = None
         return action
@@ -70,3 +74,25 @@ def test_on_disconnect_network_drop_keeps_token(tmp_path):
     assert s.on_disconnect(None, None) == RECONNECT
     from a2a_client import device_identity
     assert device_identity.load_device_token(path) == "STORED"
+
+
+def test_on_disconnect_revoke_with_override_throttles_instead_of_repairing(tmp_path):
+    # A revoked override token is an operator/config error, not a re-pair trigger --
+    # it must not hot-loop and must not wipe/clear anything.
+    path = str(tmp_path / "t")
+    s = FakeService(path, override="OVR", stored="STORED")
+    s.resolve_device_token(run_pairing=lambda: "x")
+    assert s.on_disconnect(403, None) == RECONNECT
+    from a2a_client import device_identity
+    assert device_identity.load_device_token(path) == "STORED"
+    assert s._device_token == "OVR"
+
+
+def test_on_disconnect_account_disabled_with_override_throttles(tmp_path):
+    path = str(tmp_path / "t")
+    s = FakeService(path, override="OVR", stored="STORED")
+    s.resolve_device_token(run_pairing=lambda: "x")
+    assert s.on_disconnect(None, "account_disabled") == RECONNECT
+    from a2a_client import device_identity
+    assert device_identity.load_device_token(path) == "STORED"
+    assert s._device_token == "OVR"
