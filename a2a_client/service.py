@@ -12,10 +12,13 @@ import websockets
 
 from .audio_io import AudioIO
 from .config import Config
+from .device_identity import read_device_serial, load_device_token, save_device_token, clear_device_token
+from .disconnect import classify_disconnect, REPAIR
 from .led_status import LedConfig, LedStatusController
 from .oled_status import OledConfig, OledStatusController
 from .lugo_frame import LUGO_FRAME_OPUS, decode_frame
 from .mcp_tools import McpToolContext, handle_mcp_request
+from .pairing import run_pairing
 from .session_state import load_session_id, save_session_id
 from .ws_protocol import build_ws_url, build_wakeup_message
 
@@ -67,6 +70,8 @@ class AudioToAudioService:
         self._start_time = time.monotonic()
         self._idle = False
         self._idle_wake_frames = 0
+        self._device_token: str | None = None
+        self._last_goodbye_reason: str | None = None
 
     def log(self, message: str) -> None:
         # Millisecond precision: diagnosing first-turn latency needs sub-second
@@ -170,6 +175,35 @@ class AudioToAudioService:
             self.log(f"stt warmed for profile: {label}")
         except Exception as exc:  # noqa: BLE001
             self.log(f"stt warm failed: {exc}")
+
+    def resolve_device_token(self) -> str:
+        if self.config.device_token:
+            self._device_token = self.config.device_token
+            return self._device_token
+        tok = load_device_token(self.config.device_token_path)
+        if tok:
+            self._device_token = tok
+            return tok
+        serial = read_device_serial()
+        base = f"{'https' if self.config.secure else 'http'}://{self.config.host}:{self.config.port}"
+
+        def _show(code: str) -> None:
+            self.log(f"pairing code: {code}")   # token never logged; code is safe
+            self.oled.show("Pair code", code)
+
+        tok = run_pairing(base, serial, show_code=_show, sleep=time.sleep)
+        save_device_token(self.config.device_token_path, tok)
+        self._device_token = tok
+        return tok
+
+    def on_disconnect(self, handshake_status: int | None, goodbye_reason: str | None) -> str:
+        action = classify_disconnect(handshake_status, goodbye_reason)
+        if action == REPAIR:
+            clear_device_token(self.config.device_token_path)
+            self._device_token = None
+            self.log("device token revoked by server -- will re-pair")
+            self.oled.show("Unpaired", "re-pairing")
+        return action
 
     async def sender(self, ws: websockets.WebSocketClientProtocol) -> None:
         await self._session_ready.wait()
@@ -364,6 +398,7 @@ class AudioToAudioService:
                 response = handle_mcp_request(payload, self._mcp_context())
                 await ws.send(json.dumps({"type": "mcp", "payload": response}))
             elif name == "goodbye":
+                self._last_goodbye_reason = event.get("reason")
                 self.log(f"server goodbye: {event.get('reason', '')}")
             elif name == "error":
                 self._cancel_idle_reset()
@@ -390,11 +425,15 @@ class AudioToAudioService:
         backoff = self.config.reconnect_initial_seconds
 
         try:
+            self.resolve_device_token()
+
             while not self.stop_event.is_set():
                 self._session_ready.clear()
+                self._last_goodbye_reason = None
+                handshake_status: int | None = None
                 self.leds.connecting()
                 self.oled.connecting()
-                ws_url = build_ws_url(self.config)
+                ws_url = build_ws_url(self.config, self._device_token)
                 try:
                     async with websockets.connect(ws_url, max_size=None, ping_interval=20, ping_timeout=20) as ws:
                         self.log(f"connected: {ws_url}")
@@ -412,6 +451,9 @@ class AudioToAudioService:
                             _ = task.exception()
                 except asyncio.CancelledError:
                     raise
+                except websockets.exceptions.InvalidStatus as exc:
+                    handshake_status = exc.response.status_code
+                    self.log(f"handshake rejected: {handshake_status}")
                 except Exception as exc:  # noqa: BLE001
                     self.log(f"connection error: {exc}")
                     self.leds.error()
@@ -423,6 +465,13 @@ class AudioToAudioService:
 
                 if self.stop_event.is_set():
                     break
+
+                action = self.on_disconnect(handshake_status, self._last_goodbye_reason)
+                if action == REPAIR:
+                    self.resolve_device_token()   # blocks on the pairing flow, shows fresh code
+                    backoff = self.config.reconnect_initial_seconds
+                    continue
+
                 self.log(f"reconnect in {backoff:.1f}s")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, self.config.reconnect_max_seconds)
