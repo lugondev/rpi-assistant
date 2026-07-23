@@ -25,9 +25,11 @@ def load_device_token(path: str) -> str | None:
 def save_device_token(path: str, token: str) -> None:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(token, encoding="utf-8")
-    os.chmod(p, 0o600)
+    fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(token)
 
 
 def clear_device_token(path: str) -> None:
+    """Clear device token; called by factory-reset button."""
     Path(path).unlink(missing_ok=True)
