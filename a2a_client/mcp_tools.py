@@ -29,6 +29,16 @@ TOOL_DEFS: list[dict] = [
         "inputSchema": {"type": "object", "properties": {}},
     },
     {
+        "name": "self.session.new",
+        "description": (
+            "Start a brand-new conversation: end the current one and forget everything "
+            "said in it. Use ONLY when the user explicitly asks to start over, start "
+            "fresh, or forget the conversation so far. Never call it to tidy up or "
+            "because the topic changed."
+        ),
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "self.screen.show_text",
         "description": "Show up to two lines of text on the device's screen temporarily.",
         "inputSchema": {
@@ -52,6 +62,11 @@ class McpToolContext:
     uptime_seconds: Callable[[], float]
     go_idle: Callable[[], None]
     show_text: Callable[[str, str], None]
+    # Records the intent only. The WebSocket send happens in the receiver, which
+    # is where the socket lives and where it can be awaited properly -- a
+    # fire-and-forget task from this synchronous handler would race the MCP
+    # response and could be garbage-collected before it ran.
+    new_session: Callable[[], None]
 
 
 def _error_result(message: str) -> dict:
@@ -88,6 +103,12 @@ def _call_tool(name: str, args: dict, ctx: McpToolContext) -> dict:
         elif name == "self.device.idle":
             ctx.go_idle()
             text = "device is now idle"
+        elif name == "self.session.new":
+            ctx.new_session()
+            # Deliberately past tense but vague about the id: the gateway assigns
+            # it, and the model has no use for it. What matters to the model is
+            # that its own context is about to be cleared.
+            text = "starting a new conversation"
         else:  # self.screen.show_text
             line1 = str(args["line1"])
             line2 = str(args.get("line2", ""))

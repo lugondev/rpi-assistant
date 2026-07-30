@@ -13,6 +13,20 @@ def build_ws_url(config: Config, device_token: str | None = None) -> str:
     return url
 
 
+def build_new_session_message() -> dict:
+    """Ask the gateway to end this conversation and start a fresh one.
+
+    Without this the device's session is effectively permanent: it keeps one
+    socket open indefinitely, and `session_state.py` persists the id and resumes
+    it after a restart, so every word it ever says accumulates in a single
+    server-side conversation.
+
+    Carries no session_id: the gateway mints the new one and answers with
+    `{"type": "session_new", ...}`, which the caller must persist.
+    """
+    return {"type": "new_session"}
+
+
 def build_wakeup_message(config: Config, session_id: str | None) -> dict:
     message: dict = {
         "type": "wakeup",

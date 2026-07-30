@@ -71,3 +71,12 @@ def test_build_ws_url_with_token():
 
 def test_build_ws_url_empty_token_omitted():
     assert build_ws_url(_base_config(), "") == "ws://127.0.0.1:8000/v1/lugo/stream"
+
+
+def test_build_new_session_message_carries_no_session_id():
+    """The gateway mints the new id and answers with {"type":"session_new"} --
+    a client-supplied id here would be a resume, which is the opposite intent."""
+    from a2a_client.ws_protocol import build_new_session_message
+
+    msg = build_new_session_message()
+    assert msg == {"type": "new_session"}

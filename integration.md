@@ -73,7 +73,16 @@ On connect the server sends one `session_started` JSON with the negotiated confi
   - `{"type":"text","text":"…"}` — text input turn (no mic).
   - `{"type":"flush"}` — force end-of-turn now (push-to-talk: send audio, then flush).
   - `{"type":"abort"}` — cancel the current reply.
-  - `{"type":"reset"}` — clear conversation history.
+  - `{"type":"new_session"}` — end this conversation and start a fresh one on the
+    same socket. The server replies with the new `session_id` (see below). Use this,
+    not `reset`, whenever the user asks to start over: a device that keeps one socket
+    open for days otherwise accumulates its entire life into a single conversation —
+    one History entry, an ever-growing LLM context, and memory extraction that never
+    runs (it only runs when a conversation ends).
+  - `{"type":"reset"}` — clear the in-memory conversation context. **Caveat:** it does
+    NOT end the stored session, so messages from before and after a reset stay in the
+    same row with a continuous turn counter. Kept as-is for compatibility; prefer
+    `new_session`.
   - `{"type":"end"}` — finalize and close.
 
 ### Server → device (JSON `{"event": …}`, plus binary frames)

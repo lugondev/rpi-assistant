@@ -6,6 +6,7 @@ class _FakeCtx:
         self.volume = 100
         self.idle_calls = 0
         self.shown: list[tuple[str, str]] = []
+        self.new_session_calls = 0
 
     def get_volume_pct(self) -> int:
         return self.volume
@@ -22,6 +23,9 @@ class _FakeCtx:
     def show_text(self, line1: str, line2: str) -> None:
         self.shown.append((line1, line2))
 
+    def new_session(self) -> None:
+        self.new_session_calls += 1
+
 
 def _ctx() -> McpToolContext:
     fake = _FakeCtx()
@@ -31,6 +35,7 @@ def _ctx() -> McpToolContext:
         uptime_seconds=fake.uptime_seconds,
         go_idle=fake.go_idle,
         show_text=fake.show_text,
+        new_session=fake.new_session,
     ), fake
 
 
@@ -41,7 +46,7 @@ def test_initialize_returns_result_with_matching_id():
     assert "result" in resp
 
 
-def test_tools_list_returns_all_four_tools():
+def test_tools_list_returns_every_tool():
     ctx, _ = _ctx()
     resp = handle_mcp_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, ctx)
     names = {t["name"] for t in resp["result"]["tools"]}
@@ -50,6 +55,7 @@ def test_tools_list_returns_all_four_tools():
         "self.audio.set_volume",
         "self.device.idle",
         "self.screen.show_text",
+        "self.session.new",
     }
 
 
@@ -224,3 +230,24 @@ def test_unknown_method_returns_json_rpc_error():
     resp = handle_mcp_request({"jsonrpc": "2.0", "id": 10, "method": "bogus"}, ctx)
     assert resp["id"] == 10
     assert "error" in resp
+
+
+def test_new_session_tool_records_the_request():
+    ctx, fake = _ctx()
+    resp = handle_mcp_request(
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+         "params": {"name": "self.session.new", "arguments": {}}},
+        ctx,
+    )
+    assert fake.new_session_calls == 1
+    assert not resp["result"].get("isError")
+
+
+def test_new_session_tool_description_bounds_when_the_model_may_use_it():
+    """This tool wipes the model's own context, so a vague description invites it
+    to fire on a topic change. The wording must pin it to an explicit user ask."""
+    ctx, _ = _ctx()
+    resp = handle_mcp_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}, ctx)
+    tool = next(t for t in resp["result"]["tools"] if t["name"] == "self.session.new")
+    assert "ONLY" in tool["description"]
+    assert "Never" in tool["description"]

@@ -20,7 +20,7 @@ from .lugo_frame import LUGO_FRAME_OPUS, decode_frame
 from .mcp_tools import McpToolContext, handle_mcp_request
 from .pairing import run_pairing
 from .session_state import load_session_id, save_session_id
-from .ws_protocol import build_ws_url, build_wakeup_message
+from .ws_protocol import build_new_session_message, build_ws_url, build_wakeup_message
 
 # Local beeps (no network/TTS involved — audible even while those are cold-loading).
 _WARMING_TONE_HZ = [440.0, 440.0]  # two flat beeps: "still starting up, please wait"
@@ -72,6 +72,11 @@ class AudioToAudioService:
         self._idle_wake_frames = 0
         self._device_token: str | None = None
         self._last_goodbye_reason: str | None = None
+        # Set by the self.session.new MCP tool, consumed by the receiver. The tool
+        # handler is synchronous and has no socket; the receiver has both, and
+        # sending from there keeps the MCP response ahead of the new_session
+        # request instead of racing it.
+        self._new_session_requested = False
 
     def log(self, message: str) -> None:
         # Millisecond precision: diagnosing first-turn latency needs sub-second
@@ -145,7 +150,11 @@ class AudioToAudioService:
             uptime_seconds=lambda: time.monotonic() - self._start_time,
             go_idle=self._go_idle,
             show_text=self._show_text_overlay,
+            new_session=self._request_new_session,
         )
+
+    def _request_new_session(self) -> None:
+        self._new_session_requested = True
 
     def _go_idle(self) -> None:
         self._idle = True
@@ -404,6 +413,25 @@ class AudioToAudioService:
                 payload = event.get("payload") or {}
                 response = handle_mcp_request(payload, self._mcp_context())
                 await ws.send(json.dumps({"type": "mcp", "payload": response}))
+                if self._new_session_requested:
+                    # After the tool result, so the model's turn completes against
+                    # the conversation it was in rather than one that vanished
+                    # underneath it.
+                    self._new_session_requested = False
+                    await ws.send(json.dumps(build_new_session_message()))
+            elif name == "session_new":
+                # The gateway ended the old conversation and opened a new one.
+                # Persisting this is not optional: load_session_id() resumes
+                # whatever is on disk at the next start, so a stale file would
+                # drag the device straight back into the conversation it left.
+                rotated_id = event.get("session_id")
+                if rotated_id:
+                    self._session_id = str(rotated_id)
+                    try:
+                        save_session_id(self.config.session_state_path, self._session_id)
+                    except Exception as exc:  # noqa: BLE001 - persistence must not break the session
+                        self.log(f"session_id persist failed: {exc}")
+                self.log(f"new conversation: session_id={self._session_id}")
             elif name == "goodbye":
                 self._last_goodbye_reason = event.get("reason")
                 self.log(f"server goodbye: {event.get('reason', '')}")
